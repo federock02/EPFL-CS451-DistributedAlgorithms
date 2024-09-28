@@ -1,12 +1,13 @@
 package cs451;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Main {
 
+    // handle termination signals
     private static void handleSignal() {
         Process process;
         //immediately stop network packet processing
@@ -16,6 +17,7 @@ public class Main {
         System.out.println("Writing output.");
     }
 
+    // initializes a shutdown hook, thread that runs while Java VM is shutting down, for graceful shutdown
     private static void initSignalHandlers() {
         Runtime.getRuntime().addShutdownHook(new Thread() {
             @Override
@@ -26,10 +28,16 @@ public class Main {
     }
 
     public static void main(String[] args) throws InterruptedException {
+        // feeding cmd line arguments to parser, to extract the various files
         Parser parser = new Parser(args);
+        // parsing
         parser.parse();
 
+        // initialize signal handler
         initSignalHandlers();
+
+        // thread pool for multithreading, with limit at 8
+        ExecutorService threadPool = Executors.newFixedThreadPool(8);
 
         // example
         long pid = ProcessHandle.current().pid();
@@ -57,8 +65,39 @@ public class Main {
 
         System.out.println("Doing some initialization\n");
 
+        // giving the host the output file path
+        parser.hosts().get(parser.myId() - 1).sendOutputPath(parser.output());
+
+        // getting config file path
+        String configFile = parser.config();
+        try(BufferedReader br = new BufferedReader(new FileReader(configFile))) {
+            int lineNum = 1;
+
+            // read all lines in the config file
+            for(String line; (line = br.readLine()) != null; lineNum++) {
+                if (line.isBlank()) {
+                    continue;
+                }
+
+                // dividing number of messages to send and who to send them
+                String[] splits = line.split(" ");
+                if (splits.length != 2) {
+                    System.err.println("Problem with the line " + lineNum + " in the configuration file!");
+                }
+                int num = Integer.parseInt(splits[0]);
+                int receiver = Integer.parseInt(splits[1]);
+
+                for (Host host : parser.hosts()) {
+                    threadPool.submit(() -> host.sendMessages(num, parser.hosts().get(receiver - 1)));
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Problem with the configuration file!");
+        }
+
         System.out.println("Broadcasting and delivering messages...\n");
 
+        threadPool.shutdown();
         // After a process finishes broadcasting,
         // it waits forever for the delivery of messages.
         while (true) {

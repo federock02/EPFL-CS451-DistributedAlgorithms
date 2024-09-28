@@ -24,6 +24,7 @@ public class HostsParser {
         this.filename = filename;
         try(BufferedReader br = new BufferedReader(new FileReader(filename))) {
             int lineNum = 1;
+            // read all lines in the hosts file
             for(String line; (line = br.readLine()) != null; lineNum++) {
                 if (line.isBlank()) {
                     continue;
@@ -35,11 +36,12 @@ public class HostsParser {
                     return false;
                 }
 
+                // create new host from id, IP address and port
                 Host newHost = new Host();
                 if (!newHost.populate(splits[0], splits[1], splits[2])) {
                     return false;
                 }
-
+                // add new host to the list of hosts
                 hosts.add(newHost);
             }
         } catch (IOException e) {

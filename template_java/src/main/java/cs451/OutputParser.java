@@ -8,6 +8,7 @@ public class OutputParser {
 
     private String path;
 
+    // parsing output file path
     public boolean populate(String key, String value) {
         if (!key.equals(OUTPUT_KEY)) {
             return false;

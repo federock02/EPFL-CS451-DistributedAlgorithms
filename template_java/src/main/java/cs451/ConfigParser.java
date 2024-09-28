@@ -6,6 +6,7 @@ public class ConfigParser {
 
     private String path;
 
+    // parsing configuration file path
     public boolean populate(String value) {
         File file = new File(value);
         path = file.getPath();

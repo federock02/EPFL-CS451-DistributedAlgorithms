@@ -23,6 +23,7 @@ public class Parser {
         outputParser = new OutputParser();
         configParser = new ConfigParser();
 
+        // check length of argument
         int argsNum = args.length;
         if (argsNum != Constants.ARG_LIMIT_CONFIG) {
             help();
