@@ -2,6 +2,7 @@ package cs451;
 
 import java.io.*;
 import java.net.Socket;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -65,11 +66,19 @@ public class Main {
 
         System.out.println("Doing some initialization\n");
 
+        // getting my hsot
+        Host myHost = parser.hosts().get(parser.myId() - 1);
+
         // giving the host the output file path
         parser.hosts().get(parser.myId() - 1).sendOutputPath(parser.output());
 
+        // list of messages that will need to be sent, thread safe
+        ConcurrentLinkedQueue<Object[]> messagesToSend = new ConcurrentLinkedQueue<>();
+
         // getting config file path
         String configFile = parser.config();
+
+        // setting up the sending phase or the receiving phase
         try(BufferedReader br = new BufferedReader(new FileReader(configFile))) {
             int lineNum = 1;
 
@@ -86,9 +95,20 @@ public class Main {
                 }
                 int num = Integer.parseInt(splits[0]);
                 int receiver = Integer.parseInt(splits[1]);
+                Host receiverHost = parser.hosts().get(receiver - 1);
 
-                for (Host host : parser.hosts()) {
-                    threadPool.submit(() -> host.sendMessages(num, parser.hosts().get(receiver - 1)));
+                // receiver process does not send any message
+                if (receiver == parser.myId() && receiverHost.getIp().equals(myHost.getIp())
+                        && receiverHost.getPort() == myHost.getPort()) {
+                    continue;
+                }
+
+                // initialize all the message objects that need to be sent
+                // by initializing all the messages needed I can guarantee property PL3 - no creation
+                for (int i = 1; i <= num; i++) {
+                    Message message = new Message(i, i, parser.myId());
+                    Object[] messagePack = {message, receiverHost};
+                    messagesToSend.add(messagePack);
                 }
             }
         } catch (IOException e) {
@@ -96,8 +116,20 @@ public class Main {
         }
 
         System.out.println("Broadcasting and delivering messages...\n");
+        while (!messagesToSend.isEmpty()) {
+            // get one message from queue
+            Object[] messagePack = messagesToSend.poll();
+            if (messagePack != null) {
+                threadPool.submit(() -> {
+                    // send the message to the receiver
+                    myHost.sendMessage((Message) messagePack[0], (Host) messagePack[1]);
+                });
+            }
+        }
+
 
         threadPool.shutdown();
+
         // After a process finishes broadcasting,
         // it waits forever for the delivery of messages.
         while (true) {

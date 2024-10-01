@@ -4,9 +4,11 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ExecutorService;
 
 // single process in the system
 public class Host {
@@ -23,10 +25,23 @@ public class Host {
     // log buffer
     // private List<String> logBuffer = new ArrayList<>();
     // safer logging to be used with concurrency
-    private ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
 
     // socket for UDP connection
     private DatagramSocket socket;
+
+    // thread pool for sending, resending, and receiving
+    private ScheduledExecutorService threadPool;
+
+    // structure for messages that need to be sent
+    private Queue<Message> messageQueue = new ConcurrentLinkedQueue<>();
+    // structure for messages that haven't been acknowledged yet
+    private Map<Integer, Message> unacknowledgedMessages = new ConcurrentHashMap<>();
+    // structure for messages that have been acknowledged
+    private Set<Integer> receivedAcks = ConcurrentHashMap.newKeySet();
+
+    // delay before resending unacknowledged messages
+    private static final long RESEND_DELAY = 300;
 
     // pseudo constructor with boolean return
     public boolean populate(String idString, String ipString, String portString) {
@@ -83,44 +98,34 @@ public class Host {
     }
 
     // logic for sending message from host to another host
-    public void sendMessages(int count, Host receiver) {
-        // receiver process does not send any message
-        if (receiver.getId() == this.id && receiver.getIp().equals(this.ip)
-                && receiver.getPort() == this.port) {
-            return;
+    public void sendMessage(Message message, Host receiver) {
+        // convert message to bytes
+        // uniting id and payload
+        String data = message.getId() + ":" + message.getPayload() + ":" + message.getSenderId();
+        byte[] byteData = data.getBytes();
+
+        // getting the receiver IP address in the right format
+        InetAddress receiverAddress = null;
+        try {
+            receiverAddress = InetAddress.getByName(receiver.getIp());
+        } catch (UnknownHostException e) {
+            throw new RuntimeException(e);
         }
 
-        // initialize all the message objects that need to be sent
-        // by initializing all the messages needed I can guarantee property PL3 - no creation
-        Message toSend[] = new Message[count];
-        for (int i = 1; i <= count; i++) {
-            toSend[i-1] = new Message(i, i);
+        // create packet with data, size of data  and receiver info
+        DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
+
+        // send the packet through the UDP socket
+        try {
+            socket.send(packet);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
 
-        for (Message message : toSend) {
-            try {
-                // convert message to bytes
-                // uniting id and payload
-                String data = message.getId() + ":" + message.getPayload();
-                byte[] byteData = data.getBytes();
+        // send to logger
+        logger("b " + message.getId());
 
-                // getting the receiver IP address in the right format
-                InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
-
-                // create packet with data, size of data  and receiver info
-                DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
-
-                // send the packet through the UDP socket
-                socket.send(packet);
-
-                // send to logger
-                logger("b " + message.getId());
-
-                // System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+        // System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
     }
 
     // logic for receiving messages, by listening for incoming messages on UDP socket
