@@ -5,15 +5,16 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.net.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.*;
 
 // single process in the system
 public class Host {
 
     private static final String IP_START_REGEX = "/";
+    private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
+    private static final int THREAD_POOL_SIZE_SENDING = 7;
+    private static final int THREAD_POOL_SIZE = 8;
+    private static final int RESEND_TIMEOUT = 300;
 
     private int id;
     private String ip;
@@ -30,18 +31,16 @@ public class Host {
     // socket for UDP connection
     private DatagramSocket socket;
 
-    // thread pool for sending, resending, and receiving
-    private ScheduledExecutorService threadPool;
+    // thread pools for sending, resending and acks
+    private ExecutorService threadPool;
+    private ExecutorService ackListener;
 
-    // structure for messages that need to be sent
-    private Queue<Message> messageQueue = new ConcurrentLinkedQueue<>();
     // structure for messages that haven't been acknowledged yet
-    private Map<Integer, Message> unacknowledgedMessages = new ConcurrentHashMap<>();
+    private Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
     // structure for messages that have been acknowledged
     private Set<Integer> receivedAcks = ConcurrentHashMap.newKeySet();
 
-    // delay before resending unacknowledged messages
-    private static final long RESEND_DELAY = 300;
+    private boolean sendingDone = false;
 
     // pseudo constructor with boolean return
     public boolean populate(String idString, String ipString, String portString) {
@@ -81,7 +80,6 @@ public class Host {
         catch (SocketException e) {
             e.printStackTrace();
         }
-
         return true;
     }
 
@@ -97,35 +95,139 @@ public class Host {
         return port;
     }
 
-    // logic for sending message from host to another host
-    public void sendMessage(Message message, Host receiver) {
+    // when I get the whole list of messages to send, I divide them in packages of 8
+    public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
+
+        // starting thread that listens for acks
+        listenForAcks();
+
+        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
+        ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
+
+        HashMap<Host, Queue<Message>> messagesPackage = new HashMap<>();
+        while (!messagesToSend.isEmpty()) {
+            Object[] messagePack = messagesToSend.poll();
+            Host receiver = (Host) messagePack[1];
+            Message message = (Message) messagePack[0];
+
+            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiver});
+
+            if (messagesPackage.containsKey(receiver)) {
+                Queue<Message> messageQueue = messagesPackage.get(receiver);
+                messageQueue.add(message);
+                if (messageQueue.size() == MAX_NUM_MESSAGES_PER_PACKAGE) {
+                    Queue<Message> queue = new LinkedList<>(messageQueue);
+                    threadPool.submit(() -> sendMessagesBatch(queue, receiver));
+                    messageQueue.clear();
+                }
+            }
+            else {
+                Queue<Message> messageQueue = new LinkedList<>();
+                messageQueue.add(message);
+                messagesPackage.put(receiver, messageQueue);
+            }
+        }
+
+        // send remaining packages
+        for (Host host : messagesPackage.keySet()) {
+            Queue<Message> messageQueue = messagesPackage.get(host);
+            if (!messageQueue.isEmpty()) {
+                threadPool.submit(() -> sendMessagesBatch(messageQueue, host));
+            }
+        }
+
+        sendingDone = true;
+        startResendScheduler();
+    }
+
+    // logic for creating the package and then sending it message from host to another host
+    public void sendMessagesBatch(Queue<Message> messageQueue, Host receiver) {
+        StringBuilder data = new StringBuilder();
+
+        // one package will contain 8 messages
+        while (!messageQueue.isEmpty()) {
+            Message message = messageQueue.poll();
+            data.append(message.getId()).append(":").append(message.getPayload()).append(":").append(message.getSenderId()).append("|");
+            logger("b " + receiver.getId());
+        }
+
         // convert message to bytes
-        // uniting id and payload
-        String data = message.getId() + ":" + message.getPayload() + ":" + message.getSenderId();
-        byte[] byteData = data.getBytes();
+        byte[] byteData = data.toString().getBytes();
 
         // getting the receiver IP address in the right format
         InetAddress receiverAddress = null;
         try {
             receiverAddress = InetAddress.getByName(receiver.getIp());
-        } catch (UnknownHostException e) {
-            throw new RuntimeException(e);
-        }
 
-        // create packet with data, size of data  and receiver info
-        DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
+            // create packet with data, size of data  and receiver info
+            DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
 
-        // send the packet through the UDP socket
-        try {
+            // send the packet through the UDP socket
             socket.send(packet);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
 
-        // send to logger
-        logger("b " + message.getId());
-
         // System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
+    }
+
+    // scheduler to resend unacknowledged messages after the timeout
+    private void startResendScheduler() {
+        threadPool.submit(() -> {
+            // will stop only if sending is done and the queue of unacknowledged messages is empty
+            while (!sendingDone || !unacknowledgedMessages.isEmpty()) {
+                for (Object[] messagePack : unacknowledgedMessages.values()) {
+                    threadPool.submit(() -> resendMessage((Message) messagePack[0], (Host) messagePack[1]));
+                }
+                try {
+                    // wait before sending again
+                    Thread.sleep(RESEND_TIMEOUT);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
+
+    // resending unacknowledged messages
+    private void resendMessage(Message message, Host receiver) {
+        try {
+            String data = message.getId() + ":" + message.getPayload() + ":" + message.getSenderId();
+            byte[] byteData = data.getBytes();
+            InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
+            DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
+            socket.send(packet);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // logic for receiving acknowledgments from receivers
+    public void listenForAcks() {
+        ackListener.submit(() -> {
+            try {
+                byte[] buffer = new byte[1024];
+                while (true) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    socket.receive(packet);
+                    String receivedData = new String(packet.getData(), 0, packet.getLength());
+
+                    // Extract acknowledgment
+                    String[] receivedMessages = receivedData.split("|");
+                    for (String messageData : receivedMessages) {
+                        String[] parts = messageData.split(":");
+                        // acknowledged message id
+                        int messageId = Integer.parseInt(parts[0]);
+                        if (unacknowledgedMessages.containsKey(messageId)) {
+                            // message has been acknowledged
+                            unacknowledgedMessages.remove(messageId);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     // logic for receiving messages, by listening for incoming messages on UDP socket

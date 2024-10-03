@@ -66,7 +66,7 @@ public class Main {
 
         System.out.println("Doing some initialization\n");
 
-        // getting my hsot
+        // getting my host
         Host myHost = parser.hosts().get(parser.myId() - 1);
 
         // giving the host the output file path
@@ -116,16 +116,7 @@ public class Main {
         }
 
         System.out.println("Broadcasting and delivering messages...\n");
-        while (!messagesToSend.isEmpty()) {
-            // get one message from queue
-            Object[] messagePack = messagesToSend.poll();
-            if (messagePack != null) {
-                threadPool.submit(() -> {
-                    // send the message to the receiver
-                    myHost.sendMessage((Message) messagePack[0], (Host) messagePack[1]);
-                });
-            }
-        }
+        myHost.sendMessages(messagesToSend);
 
 
         threadPool.shutdown();
