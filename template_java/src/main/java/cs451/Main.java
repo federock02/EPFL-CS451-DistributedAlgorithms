@@ -116,7 +116,12 @@ public class Main {
         }
 
         System.out.println("Broadcasting and delivering messages...\n");
-        myHost.sendMessages(messagesToSend);
+        if (!messagesToSend.isEmpty()) {
+            myHost.sendMessages(messagesToSend);
+        }
+        else {
+            myHost.receiveMessages();;
+        }
 
 
         threadPool.shutdown();

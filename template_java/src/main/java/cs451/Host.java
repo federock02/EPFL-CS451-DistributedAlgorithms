@@ -36,9 +36,11 @@ public class Host {
     private ExecutorService ackListener;
 
     // structure for messages that haven't been acknowledged yet
-    private Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
-    // structure for messages that have been acknowledged
-    private Set<Integer> receivedAcks = ConcurrentHashMap.newKeySet();
+    private final Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
+
+    // structure for already delivered messages in receiving phase
+    private Set<Integer> deliveredMessages = ConcurrentHashMap.newKeySet();
+
 
     private boolean sendingDone = false;
 
@@ -94,6 +96,14 @@ public class Host {
     public int getPort() {
         return port;
     }
+
+    public void sendOutputPath(String path) {
+        this.outputPath = path;
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // SENDING
+    // -----------------------------------------------------------------------------------------------------------------
 
     // when I get the whole list of messages to send, I divide them in packages of 8
     public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
@@ -212,16 +222,14 @@ public class Host {
                     socket.receive(packet);
                     String receivedData = new String(packet.getData(), 0, packet.getLength());
 
-                    // Extract acknowledgment
-                    String[] receivedMessages = receivedData.split("|");
+                    // extract ack
+                    String[] receivedMessages = receivedData.split("\\|");
                     for (String messageData : receivedMessages) {
                         String[] parts = messageData.split(":");
                         // acknowledged message id
                         int messageId = Integer.parseInt(parts[0]);
-                        if (unacknowledgedMessages.containsKey(messageId)) {
-                            // message has been acknowledged
-                            unacknowledgedMessages.remove(messageId);
-                        }
+                        // message has been acknowledged
+                        unacknowledgedMessages.remove(messageId);
                     }
                 }
             } catch (IOException e) {
@@ -230,36 +238,48 @@ public class Host {
         });
     }
 
+    // -----------------------------------------------------------------------------------------------------------------
+    // RECEIVING
+    // -----------------------------------------------------------------------------------------------------------------
+
     // logic for receiving messages, by listening for incoming messages on UDP socket
     public void receiveMessages() {
-        Thread receiverThread = new Thread(() -> receiverThreadMethod());
-        receiverThread.start();
+        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        threadPool.submit(this::receiverThreadMethod);
     }
 
     private void receiverThreadMethod() {
         try {
-            // opening Datagram socket on the host port
-            DatagramSocket socket = new DatagramSocket(this.port);
-
-            // allocating buffer for incoming messages
+            // buffer for incoming messages
             byte[] buffer = new byte[1024];
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                // extract message and split with ":"
-                String receivedMessage = new String(packet.getData(), 0, packet.getLength());
-                String[] splits = receivedMessage.split(":");
+                String data = new String(packet.getData(), 0, packet.getLength());
 
-                if (splits.length == 2) {
-                    String messageId = splits[0];
-                    String payload = splits[1];
+                // split multiple messages in the same package
+                String[] messages = data.split("\\|");
 
-                    // logging delivery
-                    logger("d " + messageId + " " + payload);
-                } else {
-                    System.err.println("Invalid message received!");
+                // split the data in the single message
+                for (String message : messages) {
+                    String[] splits = message.split(":");
+                    int id = Integer.parseInt(splits[0]);
+                    int payload = Integer.parseInt(splits[1]);
+                    int senderId = Integer.parseInt(splits[2]);
+
+                    // check if the message is already delivered
+                    if (!deliveredMessages.contains(id)) {
+                        // add to delivered
+                        deliveredMessages.add(id);
+
+                        // logging equals to delivering
+                        logger("d " + senderId + " " + payload);
+                    }
+
+                    // send ack, both if it was delivered ot not
+                    threadPool.submit(() -> sendAck(id, packet.getAddress(), packet.getPort()));
                 }
             }
         } catch (IOException e) {
@@ -267,16 +287,30 @@ public class Host {
         }
     }
 
+    // sending ack for received message
+    private void sendAck(int messageId, InetAddress receiverAddress, int receiverPort) {
+        // easy way, because receiver only receives and sender only sends, doesn't need to signal it is an ack
+        String ackData = messageId + ":" + this.id;
+        byte[] byteAckData = ackData.getBytes();
+
+        DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, receiverAddress, receiverPort);
+        try {
+            socket.send(ackPacket);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // LOGGING
+    // -----------------------------------------------------------------------------------------------------------------
+
     public void logger(String event) {
         logBuffer.add(event);
         // actually write to file only after some events
         if (logBuffer.size() >= 100) {
             logWriteToFile();
         }
-    }
-
-    public void sendOutputPath(String path) {
-        this.outputPath = path;
     }
 
     private void logWriteToFile() {
