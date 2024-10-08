@@ -14,7 +14,7 @@ public class Host {
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
     private static final int THREAD_POOL_SIZE_SENDING = 7;
     private static final int THREAD_POOL_SIZE = 8;
-    private static final int RESEND_TIMEOUT = 300;
+    private static final int RESEND_TIMEOUT = 1000;
 
     private int id;
     private String ip;
@@ -82,6 +82,19 @@ public class Host {
         catch (SocketException e) {
             e.printStackTrace();
         }
+
+        InetAddress localAddress = socket.getLocalAddress();
+        int localPort = socket.getLocalPort();
+
+        System.out.println("Socket is bound to address: " + localAddress.getHostAddress());
+        System.out.println("Socket is bound to port: " + localPort);
+
+        try {
+            InetAddress address = InetAddress.getByName(ip);
+            socket.bind(new InetSocketAddress(address, port));
+        } catch (SocketException | UnknownHostException e) {
+            throw new RuntimeException(e);
+        }
         return true;
     }
 
@@ -108,11 +121,11 @@ public class Host {
     // when I get the whole list of messages to send, I divide them in packages of 8
     public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
 
-        // starting thread that listens for acks
-        listenForAcks();
-
         threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
         ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
+
+        // starting thread that listens for acks
+        listenForAcks();
 
         HashMap<Host, Queue<Message>> messagesPackage = new HashMap<>();
         while (!messagesToSend.isEmpty()) {
@@ -159,6 +172,7 @@ public class Host {
             Message message = messageQueue.poll();
             data.append(message.getId()).append(":").append(message.getPayload()).append(":").append(message.getSenderId()).append("|");
             logger("b " + receiver.getId());
+            System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         }
 
         // convert message to bytes
@@ -178,7 +192,6 @@ public class Host {
             throw new RuntimeException(e);
         }
 
-        // System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
     }
 
     // scheduler to resend unacknowledged messages after the timeout
@@ -207,6 +220,7 @@ public class Host {
             InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
             DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
             socket.send(packet);
+            System.out.println("Resent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -276,6 +290,8 @@ public class Host {
 
                         // logging equals to delivering
                         logger("d " + senderId + " " + payload);
+                        System.out.println("Delivered message from " + senderId);
+
                     }
 
                     // send ack, both if it was delivered ot not
@@ -292,6 +308,8 @@ public class Host {
         // easy way, because receiver only receives and sender only sends, doesn't need to signal it is an ack
         String ackData = messageId + ":" + this.id;
         byte[] byteAckData = ackData.getBytes();
+        System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
+
 
         DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, receiverAddress, receiverPort);
         try {
