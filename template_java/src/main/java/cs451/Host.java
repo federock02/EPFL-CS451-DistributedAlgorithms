@@ -1,8 +1,6 @@
 package cs451;
 
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -14,7 +12,7 @@ public class Host {
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
     private static final int THREAD_POOL_SIZE_SENDING = 7;
     private static final int THREAD_POOL_SIZE = 8;
-    private static final int RESEND_TIMEOUT = 1000;
+    private static final int RESEND_TIMEOUT = 10000;
 
     private int id;
     private String ip;
@@ -39,8 +37,7 @@ public class Host {
     private final Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
 
     // structure for already delivered messages in receiving phase
-    private Set<Integer> deliveredMessages = ConcurrentHashMap.newKeySet();
-
+    private Map<Integer, Set<Integer>> deliveredMap = new ConcurrentHashMap<>();
 
     private boolean sendingDone = false;
 
@@ -77,23 +74,14 @@ public class Host {
 
         // opening the socket
         try {
-            socket = new DatagramSocket();
-        }
-        catch (SocketException e) {
-            e.printStackTrace();
-        }
-
-        InetAddress localAddress = socket.getLocalAddress();
-        int localPort = socket.getLocalPort();
-
-        System.out.println("Socket is bound to address: " + localAddress.getHostAddress());
-        System.out.println("Socket is bound to port: " + localPort);
-
-        try {
+            socket = new DatagramSocket(null);
+            socket.setReuseAddress(true);
             InetAddress address = InetAddress.getByName(ip);
             socket.bind(new InetSocketAddress(address, port));
-        } catch (SocketException | UnknownHostException e) {
-            throw new RuntimeException(e);
+            System.out.println("Socket bound to " + socket.getLocalAddress().getHostAddress() + " : " + socket.getLocalPort());
+        }
+        catch (SocketException | UnknownHostException e) {
+            e.printStackTrace();
         }
         return true;
     }
@@ -110,8 +98,10 @@ public class Host {
         return port;
     }
 
-    public void sendOutputPath(String path) {
+    public void setOutputPath(String path) {
         this.outputPath = path;
+        File file = new File(path);
+        file.delete();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -120,6 +110,9 @@ public class Host {
 
     // when I get the whole list of messages to send, I divide them in packages of 8
     public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
+
+        System.out.println("Socket bound to: " + socket.getLocalAddress().getHostAddress() + " : " + socket.getLocalPort());
+
 
         threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
         ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
@@ -165,26 +158,42 @@ public class Host {
 
     // logic for creating the package and then sending it message from host to another host
     public void sendMessagesBatch(Queue<Message> messageQueue, Host receiver) {
-        StringBuilder data = new StringBuilder();
+        byte[] byteData = {};
+        byte[] newData;
+        byte[] serializedMessage;
+
 
         // one package will contain 8 messages
         while (!messageQueue.isEmpty()) {
             Message message = messageQueue.poll();
-            data.append(message.getId()).append(":").append(message.getPayload()).append(":").append(message.getSenderId()).append("|");
+            serializedMessage = message.serialize();
+
+            int messageSize = serializedMessage.length;
+            byte[] messageSizeBytes = new byte[4];
+            messageSizeBytes[0] = (byte) (messageSize >> 24);
+            messageSizeBytes[1] = (byte) (messageSize >> 16);
+            messageSizeBytes[2] = (byte) (messageSize >> 8);
+            messageSizeBytes[3] = (byte) (messageSize);
+
+            newData = new byte[byteData.length + 4 + serializedMessage.length];
+
+            System.arraycopy(byteData, 0, newData, 0, byteData.length);
+            System.arraycopy(messageSizeBytes, 0, newData, byteData.length, 4);
+            System.arraycopy(serializedMessage, 0, newData, byteData.length + 4, serializedMessage.length);
+            byteData = newData;
+
             logger("b " + receiver.getId());
             System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         }
 
-        // convert message to bytes
-        byte[] byteData = data.toString().getBytes();
-
         // getting the receiver IP address in the right format
-        InetAddress receiverAddress = null;
+        InetAddress receiverAddress;
         try {
             receiverAddress = InetAddress.getByName(receiver.getIp());
 
             // create packet with data, size of data  and receiver info
             DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
+            System.out.println("Sending message of length " + byteData.length + " to: " + receiver.getIp() + " : " + receiver.getPort());
 
             // send the packet through the UDP socket
             socket.send(packet);
@@ -199,14 +208,14 @@ public class Host {
         threadPool.submit(() -> {
             // will stop only if sending is done and the queue of unacknowledged messages is empty
             while (!sendingDone || !unacknowledgedMessages.isEmpty()) {
-                for (Object[] messagePack : unacknowledgedMessages.values()) {
-                    threadPool.submit(() -> resendMessage((Message) messagePack[0], (Host) messagePack[1]));
-                }
                 try {
                     // wait before sending again
                     Thread.sleep(RESEND_TIMEOUT);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
+                }
+                for (Object[] messagePack : unacknowledgedMessages.values()) {
+                    threadPool.submit(() -> resendMessage((Message) messagePack[0], (Host) messagePack[1]));
                 }
             }
         });
@@ -215,9 +224,20 @@ public class Host {
     // resending unacknowledged messages
     private void resendMessage(Message message, Host receiver) {
         try {
-            String data = message.getId() + ":" + message.getPayload() + ":" + message.getSenderId();
-            byte[] byteData = data.getBytes();
+            byte[] serializedMessage = message.serialize();
+            int messageSize = serializedMessage.length;
+
+            // create byte array for size (4 bytes) and serialized message
+            byte[] byteData = new byte[4 + messageSize];
+
+            byteData[0] = (byte) (messageSize >> 24);
+            byteData[1] = (byte) (messageSize >> 16);
+            byteData[2] = (byte) (messageSize >> 8);
+            byteData[3] = (byte) (messageSize);
+            System.arraycopy(serializedMessage, 0, byteData, 4, messageSize);
+
             InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
+
             DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
             socket.send(packet);
             System.out.println("Resent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
@@ -230,10 +250,21 @@ public class Host {
     public void listenForAcks() {
         ackListener.submit(() -> {
             try {
-                byte[] buffer = new byte[1024];
+                byte[] buffer = new byte[8];
                 while (true) {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     socket.receive(packet);
+
+                    int messageId = ((buffer[0] & 0xFF) << 24) |
+                            ((buffer[1] & 0xFF) << 16) |
+                            ((buffer[2] & 0xFF) << 8) |
+                            (buffer[3] & 0xFF);
+
+                    System.out.println("Received ack for message " + messageId);
+
+                    unacknowledgedMessages.remove(messageId);
+
+                    /*
                     String receivedData = new String(packet.getData(), 0, packet.getLength());
 
                     // extract ack
@@ -245,6 +276,7 @@ public class Host {
                         // message has been acknowledged
                         unacknowledgedMessages.remove(messageId);
                     }
+                    */
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -265,14 +297,71 @@ public class Host {
     private void receiverThreadMethod() {
         try {
             // buffer for incoming messages
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[4096];
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                System.out.println("Socket bound to: " + socket.getLocalAddress().getHostAddress() + " : " + socket.getLocalPort());
                 socket.receive(packet);
 
-                String data = new String(packet.getData(), 0, packet.getLength());
+                byte[] packetData = packet.getData();
+                int packetLength = packet.getLength();
+                int currentPos = 0;
 
+                while (currentPos < packetLength) {
+                    // extract size of next message
+                    int messageSize = ((packetData[currentPos] & 0xFF) << 24)
+                            | ((packetData[currentPos + 1] & 0xFF) << 16)
+                            | ((packetData[currentPos + 2] & 0xFF) << 8)
+                            | (packetData[currentPos + 3] & 0xFF);
+                    currentPos += 4;
+
+                    if (currentPos + messageSize > packetLength) {
+                        System.err.println("Incomplete message.");
+                        break;
+                    }
+
+                    // extract message content based on size
+                    byte[] messageBytes = new byte[messageSize];
+                    System.arraycopy(packetData, currentPos, messageBytes, 0, messageSize);
+                    currentPos += messageSize;
+
+                    // deserialize and process the message
+                    Message message = Message.deserialize(messageBytes);
+                    int id = message.getId();
+                    int senderId = message.getSenderId();
+
+                    // check if the message is already delivered from sender
+                    Set<Integer> deliveredMessages;
+                    if ((deliveredMessages = deliveredMap.get(senderId)) != null) {
+                        if (!deliveredMessages.contains(id)) {
+                            // add to delivered
+                            deliveredMessages.add(id);
+
+                            // logging equals to delivering
+                            logger("d " + senderId + " " + message.getPayload().getValue());
+                            System.out.println("Delivered message from " + senderId);
+                        }
+                    }
+                    else {
+                        // never received from sender, add to delivered and add sender
+                        deliveredMessages = ConcurrentHashMap.newKeySet();
+
+                        // add to delivered
+                        deliveredMessages.add(id);
+                        deliveredMap.put(senderId, deliveredMessages);
+
+                        // logging equals to delivering
+                        logger("d " + senderId + " " + message.getPayload().getValue());
+                        System.out.println("Delivered message from " + senderId);
+                    }
+
+
+                    // send ack, both if it was delivered ot not
+                    threadPool.submit(() -> sendAck(id, packet.getAddress(), packet.getPort()));
+                }
+
+                /*
                 // split multiple messages in the same package
                 String[] messages = data.split("\\|");
 
@@ -283,20 +372,36 @@ public class Host {
                     int payload = Integer.parseInt(splits[1]);
                     int senderId = Integer.parseInt(splits[2]);
 
-                    // check if the message is already delivered
-                    if (!deliveredMessages.contains(id)) {
+                    // check if the message is already delivered from sender
+                    Set<Integer> deliveredMessages;
+                    if ((deliveredMessages = deliveredMap.get(senderId)) != null) {
+                        if (!deliveredMessages.contains(id)) {
+                            // add to delivered
+                            deliveredMessages.add(id);
+
+                            // logging equals to delivering
+                            logger("d " + senderId + " " + payload);
+                            System.out.println("Delivered message from " + senderId);
+                        }
+                    }
+                    else {
+                        // never received from sender, add to delivered and add sender
+                        deliveredMessages = ConcurrentHashMap.newKeySet();
+
                         // add to delivered
                         deliveredMessages.add(id);
+                        deliveredMap.put(senderId, deliveredMessages);
 
                         // logging equals to delivering
                         logger("d " + senderId + " " + payload);
                         System.out.println("Delivered message from " + senderId);
-
                     }
+
 
                     // send ack, both if it was delivered ot not
                     threadPool.submit(() -> sendAck(id, packet.getAddress(), packet.getPort()));
                 }
+                */
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -305,11 +410,21 @@ public class Host {
 
     // sending ack for received message
     private void sendAck(int messageId, InetAddress receiverAddress, int receiverPort) {
-        // easy way, because receiver only receives and sender only sends, doesn't need to signal it is an ack
-        String ackData = messageId + ":" + this.id;
-        byte[] byteAckData = ackData.getBytes();
-        System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
+        byte[] byteAckData = new byte[8];
 
+        // Convert messageId to bytes
+        byteAckData[0] = (byte) (messageId >> 24);
+        byteAckData[1] = (byte) (messageId >> 16);
+        byteAckData[2] = (byte) (messageId >> 8);
+        byteAckData[3] = (byte) (messageId);
+
+        // Convert receiverId to bytes
+        byteAckData[4] = (byte) (this.id >> 24);
+        byteAckData[5] = (byte) (this.id >> 16);
+        byteAckData[6] = (byte) (this.id >> 8);
+        byteAckData[7] = (byte) (this.id);
+
+        System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
 
         DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, receiverAddress, receiverPort);
         try {
@@ -317,6 +432,20 @@ public class Host {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        /*
+        // easy way, because receiver only receives and sender only sends, doesn't need to signal it is an ack
+        String ackData = messageId + ":" + this.id;
+        byte[] byteAckData = ackData.getBytes();
+        System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
+
+        DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, receiverAddress, receiverPort);
+        try {
+            socket.send(ackPacket);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        */
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -326,7 +455,7 @@ public class Host {
     public void logger(String event) {
         logBuffer.add(event);
         // actually write to file only after some events
-        if (logBuffer.size() >= 100) {
+        if (logBuffer.size() >= 1) {
             logWriteToFile();
         }
     }

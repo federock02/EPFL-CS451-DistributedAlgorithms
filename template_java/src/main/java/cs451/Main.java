@@ -1,7 +1,6 @@
 package cs451;
 
 import java.io.*;
-import java.net.Socket;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -70,7 +69,7 @@ public class Main {
         Host myHost = parser.hosts().get(parser.myId() - 1);
 
         // giving the host the output file path
-        parser.hosts().get(parser.myId() - 1).sendOutputPath(parser.output());
+        parser.hosts().get(parser.myId() - 1).setOutputPath(parser.output());
 
         // list of messages that will need to be sent, thread safe
         ConcurrentLinkedQueue<Object[]> messagesToSend = new ConcurrentLinkedQueue<>();
@@ -106,7 +105,7 @@ public class Main {
                 // initialize all the message objects that need to be sent
                 // by initializing all the messages needed I can guarantee property PL3 - no creation
                 for (int i = 1; i <= num; i++) {
-                    Message message = new Message(i, i, parser.myId());
+                    Message message = new Message(i, new Payload(i), parser.myId());
                     Object[] messagePack = {message, receiverHost};
                     messagesToSend.add(messagePack);
                 }
