@@ -4,6 +4,7 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.nio.ByteBuffer;
 
 // single process in the system
 public class Host {
@@ -12,7 +13,7 @@ public class Host {
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
     private static final int THREAD_POOL_SIZE_SENDING = 7;
     private static final int THREAD_POOL_SIZE = 8;
-    private static final int RESEND_TIMEOUT = 10000;
+    private static final int RESEND_TIMEOUT = 100;
 
     private int id;
     private String ip;
@@ -110,10 +111,6 @@ public class Host {
 
     // when I get the whole list of messages to send, I divide them in packages of 8
     public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
-
-        System.out.println("Socket bound to: " + socket.getLocalAddress().getHostAddress() + " : " + socket.getLocalPort());
-
-
         threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
         ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
 
@@ -158,6 +155,30 @@ public class Host {
 
     // logic for creating the package and then sending it message from host to another host
     public void sendMessagesBatch(Queue<Message> messageQueue, Host receiver) {
+        // total size of the package
+        int totalSize = 0;
+        for (Message message : messageQueue) {
+            totalSize += 4 + message.serialize().length;
+        }
+
+        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+
+        // serialize each message and add to buffer
+        while (!messageQueue.isEmpty()) {
+            Message message = messageQueue.poll();
+            byte[] serializedMessage = message.serialize();
+
+            buffer.putInt(serializedMessage.length);
+
+            buffer.put(serializedMessage);
+
+            logger("b " + receiver.getId());
+            System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
+        }
+
+        byte[] byteData = buffer.array();
+
+        /*
         byte[] byteData = {};
         byte[] newData;
         byte[] serializedMessage;
@@ -185,6 +206,7 @@ public class Host {
             logger("b " + receiver.getId());
             System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         }
+        */
 
         // getting the receiver IP address in the right format
         InetAddress receiverAddress;
@@ -227,6 +249,14 @@ public class Host {
             byte[] serializedMessage = message.serialize();
             int messageSize = serializedMessage.length;
 
+            ByteBuffer buffer = ByteBuffer.allocate(4 + messageSize);
+
+            buffer.putInt(messageSize);
+            buffer.put(serializedMessage);
+
+            byte[] byteData = buffer.array();
+
+            /*
             // create byte array for size (4 bytes) and serialized message
             byte[] byteData = new byte[4 + messageSize];
 
@@ -235,6 +265,7 @@ public class Host {
             byteData[2] = (byte) (messageSize >> 8);
             byteData[3] = (byte) (messageSize);
             System.arraycopy(serializedMessage, 0, byteData, 4, messageSize);
+            */
 
             InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
 
@@ -255,10 +286,15 @@ public class Host {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     socket.receive(packet);
 
+                    ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
+                    int messageId = byteBuffer.getInt();
+
+                    /*
                     int messageId = ((buffer[0] & 0xFF) << 24) |
                             ((buffer[1] & 0xFF) << 16) |
                             ((buffer[2] & 0xFF) << 8) |
                             (buffer[3] & 0xFF);
+                    */
 
                     System.out.println("Received ack for message " + messageId);
 
@@ -301,30 +337,29 @@ public class Host {
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                System.out.println("Socket bound to: " + socket.getLocalAddress().getHostAddress() + " : " + socket.getLocalPort());
                 socket.receive(packet);
 
+                /*
                 byte[] packetData = packet.getData();
                 int packetLength = packet.getLength();
                 int currentPos = 0;
+                */
 
-                while (currentPos < packetLength) {
+                ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
+                int packetLength = packet.getLength();
+
+                while (byteBuffer.position() < packetLength) {
                     // extract size of next message
-                    int messageSize = ((packetData[currentPos] & 0xFF) << 24)
-                            | ((packetData[currentPos + 1] & 0xFF) << 16)
-                            | ((packetData[currentPos + 2] & 0xFF) << 8)
-                            | (packetData[currentPos + 3] & 0xFF);
-                    currentPos += 4;
+                    int messageSize = byteBuffer.getInt();
 
-                    if (currentPos + messageSize > packetLength) {
-                        System.err.println("Incomplete message.");
+                    if (byteBuffer.position() + messageSize > packetLength) {
+                        System.err.println("Incomplete message");
                         break;
                     }
 
                     // extract message content based on size
                     byte[] messageBytes = new byte[messageSize];
-                    System.arraycopy(packetData, currentPos, messageBytes, 0, messageSize);
-                    currentPos += messageSize;
+                    byteBuffer.get(messageBytes, 0, messageSize);
 
                     // deserialize and process the message
                     Message message = Message.deserialize(messageBytes);
@@ -410,19 +445,13 @@ public class Host {
 
     // sending ack for received message
     private void sendAck(int messageId, InetAddress receiverAddress, int receiverPort) {
-        byte[] byteAckData = new byte[8];
+        ByteBuffer byteBuffer = ByteBuffer.allocate(8);
 
-        // Convert messageId to bytes
-        byteAckData[0] = (byte) (messageId >> 24);
-        byteAckData[1] = (byte) (messageId >> 16);
-        byteAckData[2] = (byte) (messageId >> 8);
-        byteAckData[3] = (byte) (messageId);
+        // convert messageId and receiverId to bytes
+        byteBuffer.putInt(messageId);
+        byteBuffer.putInt(this.id);
 
-        // Convert receiverId to bytes
-        byteAckData[4] = (byte) (this.id >> 24);
-        byteAckData[5] = (byte) (this.id >> 16);
-        byteAckData[6] = (byte) (this.id >> 8);
-        byteAckData[7] = (byte) (this.id);
+        byte[] byteAckData = byteBuffer.array();
 
         System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
 
@@ -460,7 +489,7 @@ public class Host {
         }
     }
 
-    private void logWriteToFile() {
+    public void logWriteToFile() {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(this.outputPath, true))) {
             while (!logBuffer.isEmpty()) {
                 writer.write(logBuffer.poll());

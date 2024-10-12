@@ -2,8 +2,6 @@ package cs451;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-
 
 public class Message {
     private final int id;
