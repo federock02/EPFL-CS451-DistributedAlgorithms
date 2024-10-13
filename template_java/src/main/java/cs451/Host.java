@@ -29,6 +29,7 @@ public class Host {
 
     // socket for UDP connection
     private DatagramSocket socket;
+    private final Object socketLock = new Object();
 
     // thread pools for sending, resending and acks
     private ExecutorService threadPool;
@@ -173,7 +174,7 @@ public class Host {
             buffer.put(serializedMessage);
 
             logger("b " + receiver.getId());
-            System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
+            //System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         }
 
         byte[] byteData = buffer.array();
@@ -218,7 +219,9 @@ public class Host {
             System.out.println("Sending message of length " + byteData.length + " to: " + receiver.getIp() + " : " + receiver.getPort());
 
             // send the packet through the UDP socket
-            socket.send(packet);
+            synchronized (socketLock) {
+                socket.send(packet);
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -270,7 +273,9 @@ public class Host {
             InetAddress receiverAddress = InetAddress.getByName(receiver.getIp());
 
             DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, receiver.getPort());
-            socket.send(packet);
+            synchronized (socketLock) {
+                socket.send(packet);
+            }
             System.out.println("Resent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         } catch (IOException e) {
             e.printStackTrace();
@@ -284,7 +289,9 @@ public class Host {
                 byte[] buffer = new byte[8];
                 while (true) {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                    socket.receive(packet);
+                    synchronized (socketLock) {
+                        socket.receive(packet);
+                    }
 
                     ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
                     int messageId = byteBuffer.getInt();
@@ -337,7 +344,11 @@ public class Host {
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                socket.receive(packet);
+                synchronized (socketLock) {
+                    socket.receive(packet);
+                }
+                InetAddress senderAddress = packet.getAddress();
+                int senderPort = packet.getPort();
 
                 /*
                 byte[] packetData = packet.getData();
@@ -377,6 +388,9 @@ public class Host {
                             logger("d " + senderId + " " + message.getPayload().getValue());
                             System.out.println("Delivered message from " + senderId);
                         }
+                        else {
+                            System.out.println("Received resent message from " + senderId);
+                        }
                     }
                     else {
                         // never received from sender, add to delivered and add sender
@@ -391,9 +405,8 @@ public class Host {
                         System.out.println("Delivered message from " + senderId);
                     }
 
-
                     // send ack, both if it was delivered ot not
-                    threadPool.submit(() -> sendAck(id, packet.getAddress(), packet.getPort()));
+                    threadPool.submit(() -> sendAck(id, senderAddress, senderPort));
                 }
 
                 /*
@@ -444,7 +457,7 @@ public class Host {
     }
 
     // sending ack for received message
-    private void sendAck(int messageId, InetAddress receiverAddress, int receiverPort) {
+    private void sendAck(int messageId, InetAddress senderAddress, int senderPort) {
         ByteBuffer byteBuffer = ByteBuffer.allocate(8);
 
         // convert messageId and receiverId to bytes
@@ -453,13 +466,15 @@ public class Host {
 
         byte[] byteAckData = byteBuffer.array();
 
-        System.out.println("Acknowledged message: " + messageId + " to " + receiverAddress + ":" + receiverPort);
+        System.out.println("Acknowledged message: " + messageId + " to " + senderAddress + ":" + senderPort);
 
-        DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, receiverAddress, receiverPort);
-        try {
-            socket.send(ackPacket);
-        } catch (IOException e) {
-            e.printStackTrace();
+        DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, senderAddress, senderPort);
+        synchronized (socketLock) {
+            try {
+                socket.send(ackPacket);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
 
         /*
@@ -484,7 +499,7 @@ public class Host {
     public void logger(String event) {
         logBuffer.add(event);
         // actually write to file only after some events
-        if (logBuffer.size() >= 1) {
+        if (logBuffer.size() >= 5) {
             logWriteToFile();
         }
     }
