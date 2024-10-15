@@ -7,14 +7,18 @@ import java.util.concurrent.Executors;
 
 public class Main {
 
+    private static Host myHost;
+
     // handle termination signals
     private static void handleSignal() {
         Process process;
         //immediately stop network packet processing
         System.out.println("Immediately stopping network packet processing.");
+        myHost.stopProcessing();
 
         //write/flush output file if necessary
         System.out.println("Writing output.");
+        myHost.logWriteToFile();
     }
 
     // initializes a shutdown hook, thread that runs while Java VM is shutting down, for graceful shutdown
@@ -66,7 +70,7 @@ public class Main {
         System.out.println("Doing some initialization\n");
 
         // getting my host
-        Host myHost = parser.hosts().get(parser.myId() - 1);
+        myHost = parser.hosts().get(parser.myId() - 1);
 
         // giving the host the output file path
         parser.hosts().get(parser.myId() - 1).setOutputPath(parser.output());
