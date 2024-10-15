@@ -114,14 +114,14 @@ public class Main {
             System.err.println("Problem with the configuration file!");
         }
 
+        myHost.setSocket();
+
         System.out.println("Broadcasting and delivering messages...\n");
         if (!messagesToSend.isEmpty()) {
-            System.out.println("Sender");
             myHost.sendMessages(messagesToSend);
         }
         else {
-            System.out.println("Receiver " + myHost.getIp() + " : " + myHost.getPort());
-            myHost.receiveMessages();;
+            myHost.receiveMessages();
         }
 
 
