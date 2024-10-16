@@ -13,10 +13,20 @@ public class Host {
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
     private static final int THREAD_POOL_SIZE_SENDING = 7;
     private static final int THREAD_POOL_SIZE = 8;
-    private static final int RESEND_TIMEOUT = 1000;
 
     private boolean flagStopProcessing = false;
 
+    // RTT estimation variables
+    // estimation of RTT
+    private double estimatedRTT = 10;
+    // deviation of RTT
+    private double devRTT = 0;
+    // smoothing factor for RTT
+    private final double alpha = 0.125;
+    // smoothing factor for deviation
+    private final double beta = 0.25;
+
+    // host attributes
     private int id;
     private String ip;
     private int port = -1;
@@ -112,6 +122,10 @@ public class Host {
 
     public void stopProcessing() {
         this.flagStopProcessing = true;
+        if (socket != null && !socket.isClosed()) {
+            socket.close();
+            System.out.println("Socket closed.");
+        }
         threadPool.shutdown();
         if (ackListener != null) {
             ackListener.shutdown();
@@ -136,7 +150,7 @@ public class Host {
             Host receiver = (Host) messagePack[1];
             Message message = (Message) messagePack[0];
 
-            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiver});
+            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiver, System.currentTimeMillis()});
 
             if (messagesPackage.containsKey(receiver)) {
                 Queue<Message> messageQueue = messagesPackage.get(receiver);
@@ -217,8 +231,9 @@ public class Host {
             // will stop only if sending is done and the queue of unacknowledged messages is empty
             while (!sendingDone || !unacknowledgedMessages.isEmpty()) {
                 try {
-                    // wait before sending again
-                    Thread.sleep(RESEND_TIMEOUT);
+                    // wait before sending again, with adaptive timeout
+                    long dynamicTimeout = calculateTimeout();
+                    Thread.sleep(dynamicTimeout);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -227,6 +242,11 @@ public class Host {
                 }
             }
         });
+    }
+
+    // adaptive timeout calculation
+    private long calculateTimeout() {
+        return (long) (estimatedRTT + 4 * devRTT);
     }
 
     // resending unacknowledged messages
@@ -267,9 +287,19 @@ public class Host {
                     ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
                     int messageId = byteBuffer.getInt();
 
-                    // System.out.println("Received ack for message " + messageId);
+                    long currentTime = System.currentTimeMillis();
+                    if (unacknowledgedMessages.containsKey(messageId)) {
+                        Object[] messagePack = unacknowledgedMessages.get(messageId);
+                        long sendTime = (long) messagePack[2];
+                        long sampleRTT = currentTime - sendTime;
 
-                    unacknowledgedMessages.remove(messageId);
+                        // update estimated RTT and deviation
+                        estimatedRTT = (1 - alpha) * estimatedRTT + alpha * sampleRTT;
+                        devRTT = (1 - beta) * devRTT + beta * Math.abs(sampleRTT - estimatedRTT);
+                        unacknowledgedMessages.remove(messageId);
+                    }
+
+                    // System.out.println("Received ack for message " + messageId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
