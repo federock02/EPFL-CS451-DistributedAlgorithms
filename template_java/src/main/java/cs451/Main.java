@@ -1,9 +1,7 @@
 package cs451;
 
 import java.io.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class Main {
 
@@ -76,7 +74,8 @@ public class Main {
         parser.hosts().get(parser.myId() - 1).setOutputPath(parser.output());
 
         // list of messages that will need to be sent, thread safe
-        ConcurrentLinkedQueue<Object[]> messagesToSend = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<Message> messages = new ConcurrentLinkedQueue<>();
+        Host receiverHost = null;
 
         // getting config file path
         String configFile = parser.config();
@@ -98,7 +97,7 @@ public class Main {
                 }
                 int num = Integer.parseInt(splits[0]);
                 int receiver = Integer.parseInt(splits[1]);
-                Host receiverHost = parser.hosts().get(receiver - 1);
+                receiverHost = parser.hosts().get(receiver - 1);
 
                 // receiver process does not send any message
                 if (receiver == parser.myId() && receiverHost.getIp().equals(myHost.getIp())
@@ -108,11 +107,12 @@ public class Main {
 
                 // initialize all the message objects that need to be sent
                 // by initializing all the messages needed I can guarantee property PL3 - no creation
+                int myId = parser.myId();
                 for (int i = 1; i <= num; i++) {
-                    Message message = new Message(i, new Payload(i), parser.myId());
-                    Object[] messagePack = {message, receiverHost};
-                    messagesToSend.add(messagePack);
+                    messages.add(new Message(i, i, myId));
+                    // System.out.println("Added new message for host " + myId);
                 }
+
             }
         } catch (IOException e) {
             System.err.println("Problem with the configuration file!");
@@ -121,8 +121,8 @@ public class Main {
         myHost.setSocket();
 
         System.out.println("Broadcasting and delivering messages...\n");
-        if (!messagesToSend.isEmpty()) {
-            myHost.sendMessages(messagesToSend);
+        if (!messages.isEmpty()) {
+            myHost.sendMessages(messages, receiverHost);
         }
         else {
             myHost.receiveMessages();

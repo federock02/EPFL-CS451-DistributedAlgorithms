@@ -5,57 +5,71 @@ import java.nio.ByteBuffer;
 
 public class Message {
     private final int id;
-    private final Payload payload;
-    private final int senderId;
+    private final byte[] payload;
+    private final byte senderId;
 
-    public Message(int id, Payload payload, int senderId) {
+    public Message(int id, byte[] payload, int senderId) {
         this.id = id;
         this.payload = payload;
-        this.senderId = senderId;
+        // byte is -128 to 127, processes from 1 to 128
+        this.senderId = (byte) (senderId - 1);
+    }
+
+    public Message(int id, int payload, int senderId) {
+        this.id = id;
+        this.payload = new byte[4];
+        this.payload[0] = (byte) ((payload & 0xFF000000) >> 24);
+        this.payload[1] = (byte) ((payload & 0x00FF0000) >> 16);
+        this.payload[2] = (byte) ((payload & 0x0000FF00) >> 8);
+        this.payload[3] = (byte) ((payload & 0x000000FF));
+        // byte is -128 to 127, processes from 1 to 128
+        this.senderId = (byte) (senderId - 1);
+        // System.out.println("New message for host " + this.senderId);
+    }
+
+    public Message(int id, String payload, int senderId) {
+        this.id = id;
+        this.payload = payload.getBytes();
+        // byte is -128 to 127, processes from 1 to 128
+        this.senderId = (byte) (senderId - 1);
+    }
+
+    public Message(int id, Object payload, int senderId) {
+        this.id = id;
+        this.payload = payload.toString().getBytes();
+        // byte is -128 to 127, processes from 1 to 128
+        this.senderId = (byte) (senderId - 1);
     }
 
     public int getId() {
         return id;
     }
 
-    public Payload getPayload() {
+    public byte[] getPayload() {
         return payload;
     }
 
     public int getSenderId() {
-        return senderId;
+        return senderId + 1;
+    }
+
+    public byte getByteSenderId() {
+        // System.out.println("Byte sender id " + this.senderId);
+        return this.senderId;
     }
 
     // manual serialization
     public byte[] serialize() {
-
-        // serialize the payload object
-        byte[] payloadBytes = serializePayload(this.payload);
-
-        // create buffer (4 bytes for id, 4 bytes for senderId, n bytes for payload (n = length))
-        assert payloadBytes != null;
-        ByteBuffer buffer = ByteBuffer.allocate(8 + payloadBytes.length);
+        // create buffer (4 bytes for id, 1 bytes for senderId, n bytes for payload (n = length))
+        ByteBuffer buffer = ByteBuffer.allocate(5 + payload.length);
 
         buffer.putInt(this.id);
-        buffer.putInt(this.senderId);
-        buffer.put(payloadBytes);
+        buffer.put(this.senderId);
+        buffer.put(payload);
+
+        // System.out.println("Sender id: " + senderId);
 
         return buffer.array();
-    }
-
-    private byte[] serializePayload(Payload payload) {
-        try (ByteArrayOutputStream byteOutputStream = new ByteArrayOutputStream();
-            ObjectOutputStream out = new ObjectOutputStream(byteOutputStream))
-        {
-            // serialize the payload object
-            out.writeObject(payload);
-
-            // return byte array of the serialized object
-            return byteOutputStream.toByteArray();
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
-        }
     }
 
     // manual deserialization
@@ -64,25 +78,9 @@ public class Message {
 
         // extract id and senderId
         int id = buffer.getInt();
-        int senderId = buffer.getInt();
+        byte senderId = buffer.get();
+        byte[] payload = buffer.array();
 
-        // extract payload bytes
-        byte[] payloadBytes = new byte[buffer.remaining()];
-        buffer.get(payloadBytes);
-
-        // deserialize payload object
-        Payload payload = deserializePayload(payloadBytes);
-
-        return new Message(id, payload, senderId);
-    }
-
-    private static Payload deserializePayload(byte[] payloadBytes) {
-        try (ByteArrayInputStream byteInputStream = new ByteArrayInputStream(payloadBytes);
-             ObjectInputStream in = new ObjectInputStream(byteInputStream)) {
-            return (Payload) in.readObject(); // Deserialize the object
-        } catch (IOException | ClassNotFoundException e) {
-            e.printStackTrace();
-            return null;
-        }
+        return new Message(id, payload, senderId + 1);
     }
 }

@@ -31,6 +31,8 @@ public class Host {
     private String ip;
     private int port = -1;
 
+    private Host receiver;
+
     // output path
     private String outputPath = "";
 
@@ -51,7 +53,7 @@ public class Host {
     private final Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
 
     // structure for already delivered messages in receiving phase
-    private final Map<Integer, Set<Integer>> deliveredMap = new ConcurrentHashMap<>();
+    private final Map<Byte, Set<Integer>> deliveredMap = new ConcurrentHashMap<>();
 
     private boolean sendingDone = false;
 
@@ -121,14 +123,14 @@ public class Host {
     }
 
     public void stopProcessing() {
+        threadPool.shutdown();
+        if (ackListener != null) {
+            ackListener.shutdown();
+        }
         this.flagStopProcessing = true;
         if (socket != null && !socket.isClosed()) {
             socket.close();
             System.out.println("Socket closed.");
-        }
-        threadPool.shutdown();
-        if (ackListener != null) {
-            ackListener.shutdown();
         }
     }
 
@@ -137,47 +139,34 @@ public class Host {
     // -----------------------------------------------------------------------------------------------------------------
 
     // when I get the whole list of messages to send, I divide them in packages of 8
-    public void sendMessages(ConcurrentLinkedQueue<Object[]> messagesToSend) {
+    public void sendMessages(ConcurrentLinkedQueue<Message> messagesToSend, Host receiver) {
         threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
         ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
 
         // starting thread that listens for acks
         listenForAcks();
 
-        HashMap<Host, Queue<Message>> messagesPackage = new HashMap<>();
+        Queue<Message> messagesPackage = new LinkedList<>();
         while (!messagesToSend.isEmpty()) {
-            Object[] messagePack = messagesToSend.poll();
-            Host receiver = (Host) messagePack[1];
-            Message message = (Message) messagePack[0];
+            Message message = messagesToSend.poll();
+            messagesPackage.add(message);
 
             unacknowledgedMessages.put(message.getId(), new Object[]{message, receiver, System.currentTimeMillis()});
 
-            if (messagesPackage.containsKey(receiver)) {
-                Queue<Message> messageQueue = messagesPackage.get(receiver);
-                messageQueue.add(message);
-                if (messageQueue.size() == MAX_NUM_MESSAGES_PER_PACKAGE) {
-                    Queue<Message> queue = new LinkedList<>(messageQueue);
-                    threadPool.submit(() -> sendMessagesBatch(queue, receiver));
-                    messageQueue.clear();
-                }
-            }
-            else {
-                Queue<Message> messageQueue = new LinkedList<>();
-                messageQueue.add(message);
-                messagesPackage.put(receiver, messageQueue);
+            if (messagesPackage.size() >= MAX_NUM_MESSAGES_PER_PACKAGE) {
+                Queue<Message> queue = new LinkedList<>(messagesPackage);
+                threadPool.submit(() -> sendMessagesBatch(queue, receiver));
+                messagesPackage.clear();
             }
         }
 
         // send remaining packages
-        for (Host host : messagesPackage.keySet()) {
-            Queue<Message> messageQueue = messagesPackage.get(host);
-            if (!messageQueue.isEmpty()) {
-                threadPool.submit(() -> sendMessagesBatch(messageQueue, host));
-            }
-        }
+        if (!flagStopProcessing) {
+            threadPool.submit(() -> sendMessagesBatch(messagesPackage, receiver));
 
-        sendingDone = true;
-        startResendScheduler();
+            sendingDone = true;
+            startResendScheduler();
+        }
     }
 
     // logic for creating the package and then sending it message from host to another host
@@ -192,16 +181,16 @@ public class Host {
 
         // serialize each message and add to buffer
         while (!messageQueue.isEmpty()) {
-            Message message = messageQueue.poll();
-            byte[] serializedMessage = message.serialize();
-
-            buffer.putInt(serializedMessage.length);
-
-            buffer.put(serializedMessage);
             if (!flagStopProcessing) {
+                Message message = messageQueue.poll();
+                byte[] serializedMessage = message.serialize();
+
+                buffer.putInt(serializedMessage.length);
+
+                buffer.put(serializedMessage);
                 threadPool.submit(() -> logger("b " + message.getId()));
+                //System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
             }
-            //System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
         }
 
         byte[] byteData = buffer.array();
@@ -321,7 +310,7 @@ public class Host {
     private void receiverThreadMethod() {
         try {
             // buffer for incoming messages
-            byte[] buffer = new byte[4096];
+            byte[] buffer = new byte[2048];
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
@@ -335,9 +324,8 @@ public class Host {
                 int packetLength = packet.getLength();
 
                 if (!flagStopProcessing) {
-                    // send ack, both if it was delivered ot not
-                    threadPool.submit(() -> sendAck(id, senderAddress, senderPort));
-                    threadPool.submit(() -> processMessage(byteBuffer, packetLength));
+                    // process
+                    threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
                 }
             }
         } catch (IOException e) {
@@ -345,7 +333,7 @@ public class Host {
         }
     }
 
-    private void processMessage(ByteBuffer byteBuffer, int packetLength) {
+    private void processMessage(ByteBuffer byteBuffer, int packetLength, InetAddress senderAddress, int senderPort) {
         while (byteBuffer.position() < packetLength) {
             // extract size of next message
             int messageSize = byteBuffer.getInt();
@@ -362,7 +350,10 @@ public class Host {
             // deserialize and process the message
             Message message = Message.deserialize(messageBytes);
             int id = message.getId();
-            int senderId = message.getSenderId();
+            byte senderId = message.getByteSenderId();
+            int payloadAsInt = ByteBuffer.wrap(message.getPayload()).getInt();
+
+            threadPool.submit(() -> sendAck(id, senderAddress, senderPort));
 
             // check if the message is already delivered from sender
             Set<Integer> deliveredMessages;
@@ -372,7 +363,8 @@ public class Host {
                     deliveredMessages.add(id);
 
                     // logging equals to delivering
-                    threadPool.submit(() -> logger("d " + senderId + " " + message.getPayload().getValue()));
+                    int sender = senderId + 1;
+                    threadPool.submit(() -> logger("d " + sender + " " + payloadAsInt));
                     // System.out.println("Delivered message from " + senderId);
                 }
             } else {
@@ -384,7 +376,8 @@ public class Host {
                 deliveredMap.put(senderId, deliveredMessages);
 
                 // logging equals to delivering
-                logger("d " + senderId + " " + message.getPayload().getValue());
+                int sender = senderId + 1;
+                threadPool.submit(() -> logger("d " + sender + " " + payloadAsInt));
                 // System.out.println("Delivered message from " + senderId);
             }
         }
@@ -435,5 +428,4 @@ public class Host {
             e.printStackTrace();
         }
     }
-
 }
