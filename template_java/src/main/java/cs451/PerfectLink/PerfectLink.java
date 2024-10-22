@@ -293,13 +293,13 @@ public class PerfectLink {
                     long currentTime = System.currentTimeMillis();
                     if (unacknowledgedMessages.containsKey(messageId)) {
                         Object[] messagePack = unacknowledgedMessages.get(messageId);
+                        unacknowledgedMessages.remove(messageId);
                         long sendTime = (long) messagePack[2];
                         long sampleRTT = currentTime - sendTime;
 
                         // update estimated RTT and deviation
                         this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
-                        unacknowledgedMessages.remove(messageId);
                     }
                     // System.out.println("Received ack for message " + messageId);
                 }
@@ -327,8 +327,18 @@ public class PerfectLink {
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                if (!flagStopProcessing) {
-                    mySocket.receive(packet);
+                try {
+                    if (!flagStopProcessing) {
+                        mySocket.receive(packet);
+                    }
+                } catch (SocketException e) {
+                    if (flagStopProcessing) {
+                        // socket is closed during shutdown, exit gracefully
+                        break;
+                    } else {
+                        // unexpected socket exception
+                        e.printStackTrace();
+                    }
                 }
                 InetAddress senderAddress = packet.getAddress();
                 int senderPort = packet.getPort();
