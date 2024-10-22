@@ -246,7 +246,8 @@ public class PerfectLink {
                     long dynamicTimeout = calculateTimeout();
                     Thread.sleep(dynamicTimeout);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
+                    break;
                 }
                 for (Object[] messagePack : unacknowledgedMessages.values()) {
                     threadPool.submit(() -> resend((Message) messagePack[0]));
