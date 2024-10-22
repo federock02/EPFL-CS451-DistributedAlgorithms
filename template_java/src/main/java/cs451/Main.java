@@ -16,7 +16,7 @@ public class Main {
 
         //write/flush output file if necessary
         System.out.println("Writing output.");
-        myHost.logWriteToFile();
+        myHost.flushLog();
     }
 
     // initializes a shutdown hook, thread that runs while Java VM is shutting down, for graceful shutdown
@@ -76,9 +76,13 @@ public class Main {
         // list of messages that will need to be sent, thread safe
         ConcurrentLinkedQueue<Message> messages = new ConcurrentLinkedQueue<>();
         Host receiverHost = null;
+        boolean flagReceiver = false;
 
         // getting config file path
         String configFile = parser.config();
+
+        int numMessages = 0;
+        int receiverId;
 
         // setting up the sending phase or the receiving phase
         try(BufferedReader br = new BufferedReader(new FileReader(configFile))) {
@@ -95,36 +99,35 @@ public class Main {
                 if (splits.length != 2) {
                     System.err.println("Problem with the line " + lineNum + " in the configuration file!");
                 }
-                int num = Integer.parseInt(splits[0]);
-                int receiver = Integer.parseInt(splits[1]);
-                receiverHost = parser.hosts().get(receiver - 1);
+                numMessages = Integer.parseInt(splits[0]);
+                receiverId = Integer.parseInt(splits[1]);
+                receiverHost = parser.hosts().get(receiverId - 1);
 
                 // receiver process does not send any message
-                if (receiver == parser.myId() && receiverHost.getIp().equals(myHost.getIp())
+                if (receiverId == parser.myId() && receiverHost.getIp().equals(myHost.getIp())
                         && receiverHost.getPort() == myHost.getPort()) {
-                    continue;
+                    flagReceiver = true;
                 }
-
-                // initialize all the message objects that need to be sent
-                // by initializing all the messages needed I can guarantee property PL3 - no creation
-                int myId = parser.myId();
-                for (int i = 1; i <= num; i++) {
-                    messages.add(new Message(i, i, myId));
-                    // System.out.println("Added new message for host " + myId);
-                }
-
             }
         } catch (IOException e) {
             System.err.println("Problem with the configuration file!");
         }
 
-        myHost.setSocket();
 
         System.out.println("Broadcasting and delivering messages...\n");
-        if (!messages.isEmpty()) {
-            myHost.sendMessages(messages, receiverHost);
+        if (!flagReceiver) {
+            myHost.startSender(receiverHost);
+
+            // initialize all the message objects that need to be sent
+            // by initializing all the messages needed I can guarantee property PL3 - no creation
+            int myId = parser.myId();
+            for (int i = 1; i <= numMessages; i++) {
+                myHost.sendMessage(new Message(i, i, myId), receiverHost);
+                // System.out.println("Added new message for host " + myId);
+            }
         }
         else {
+            myHost.startReceiver();
             myHost.receiveMessages();
         }
 
