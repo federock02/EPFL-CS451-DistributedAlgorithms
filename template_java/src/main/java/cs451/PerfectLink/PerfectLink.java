@@ -6,6 +6,7 @@ import cs451.Message;
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -23,12 +24,9 @@ public class PerfectLink {
 
     private DatagramSocket mySocket;
 
-    private static final int THREAD_POOL_SIZE_SENDING = 1;
-    private static final int THREAD_POOL_SIZE = 2;
-
     // RTT estimation variables
     // estimation of RTT
-    private double estimatedRTT = 50;
+    private double estimatedRTT = 250;
     // deviation of RTT
     private double devRTT = 0;
     // smoothing factor for RTT
@@ -37,8 +35,8 @@ public class PerfectLink {
     private final double beta = 0.25;
 
     // thread pools for sending, resending and acks
-    private ExecutorService threadPool;
-    private ExecutorService ackListener;
+    private ThreadPoolExecutor threadPool;
+    private ThreadPoolExecutor ackListener;
 
     private boolean flagStopProcessing = false;
 
@@ -84,8 +82,16 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
-        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
-        ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
+        // bounded queues with a maximum of 100 and 50 pending tasks
+        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(100);
+        BlockingQueue<Runnable> ackQueue = new LinkedBlockingQueue<>(50);
+
+        threadPool = new ThreadPoolExecutor(
+                2, 3, 60L, TimeUnit.SECONDS, taskQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        ackListener = new ThreadPoolExecutor(
+                1, 2, 60L, TimeUnit.SECONDS, ackQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
 
         listenForAcks();
         startResendScheduler();
@@ -106,8 +112,19 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
-        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE_SENDING);
-        ackListener = Executors.newFixedThreadPool(THREAD_POOL_SIZE - THREAD_POOL_SIZE_SENDING);
+        // bounded queues with a maximum of 100 and 50 pending tasks
+        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(100);
+        BlockingQueue<Runnable> ackQueue = new LinkedBlockingQueue<>(50);
+
+        threadPool = new ThreadPoolExecutor(
+                8, 8, 60L, TimeUnit.SECONDS, taskQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        ackListener = new ThreadPoolExecutor(
+                4, 4, 60L, TimeUnit.SECONDS, ackQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
+
+        listenForAcks();
+        startResendScheduler();
 
         listenForAcks();
         startResendScheduler();
@@ -124,7 +141,11 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
-        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        // bounded queue for managing pending tasks
+        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(50);
+
+        threadPool = new ThreadPoolExecutor(2,  2, 60L, TimeUnit.SECONDS,
+                taskQueue, new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     public void stopProcessing() {
@@ -135,20 +156,24 @@ public class PerfectLink {
         }
         if (mySocket != null && !mySocket.isClosed()) {
             try {
-                if (!threadPool.awaitTermination(500, TimeUnit.MILLISECONDS)) {
-                    threadPool.shutdownNow();  // Force shutdown if threads don't stop
+                if (!threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
+                    threadPool.shutdownNow();
                 }
-                if (ackListener != null && !ackListener.awaitTermination(500, TimeUnit.MILLISECONDS)) {
-                    ackListener.shutdownNow();  // Force shutdown if necessary
+                if (ackListener != null && !ackListener.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
+                    ackListener.shutdownNow();
                 }
             } catch (InterruptedException e) {
                 threadPool.shutdownNow();
                 if (ackListener != null) {
                     ackListener.shutdownNow();
                 }
+                Thread.currentThread().interrupt();
+            } finally {
+                if (mySocket != null && !mySocket.isClosed()) {
+                    mySocket.close();
+                    System.out.println("Socket closed.");
+                }
             }
-            mySocket.close();
-            System.out.println("Socket closed.");
         }
     }
 
@@ -158,11 +183,14 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message) {
+        // System.out.println("Sending " + message.getId());
+        myHost.logTesting("Sending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, System.currentTimeMillis()});
             if (messagePackage.size() >= maxNumPerPackage) {
-                sendMessagesBatch(messagePackage);
+                sendMessagesBatch(new LinkedList<>(messagePackage));
+                messagePackage.clear();
                 resetTimeout();
             } else {
                 if (timeoutTask == null || timeoutTask.isCancelled()) {
@@ -174,10 +202,13 @@ public class PerfectLink {
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message) {
+        // System.out.println("Resending " + message.getId());
+        myHost.logTesting("Resending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             if (messagePackage.size() >= maxNumPerPackage) {
-                sendMessagesBatch(messagePackage);
+                sendMessagesBatch(new LinkedList<>(messagePackage));
+                messagePackage.clear();
                 resetTimeout();
             } else {
                 if (timeoutTask == null || timeoutTask.isCancelled()) {
@@ -258,7 +289,8 @@ public class PerfectLink {
 
     // adaptive timeout calculation
     private long calculateTimeout() {
-        return (long) (estimatedRTT + 4 * devRTT);
+        long timeout = (long) (estimatedRTT + 4 * devRTT);
+        return Math.max(timeout, 100);
     }
 
     // logic for receiving acknowledgments from receivers
@@ -302,6 +334,7 @@ public class PerfectLink {
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
                     }
                     // System.out.println("Received ack for message " + messageId);
+                    myHost.logTesting("Received ack for message " + messageId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -316,14 +349,13 @@ public class PerfectLink {
     // logic for receiving messages, by listening for incoming messages on UDP socket
     public void receiveMessages() {
         // System.out.println("Receiver " + this.ip + " : " + this.port);
-        threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
         threadPool.submit(this::receiverThreadMethod);
     }
 
     private void receiverThreadMethod() {
         try {
             // buffer for incoming messages
-            byte[] buffer = new byte[4096];
+            byte[] buffer = new byte[2048];
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);

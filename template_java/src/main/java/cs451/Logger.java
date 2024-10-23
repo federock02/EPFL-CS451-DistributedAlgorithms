@@ -1,6 +1,7 @@
 package cs451;
 
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -14,9 +15,11 @@ public class Logger {
 
     public Logger(String outputPath) {
         this.outputPath = outputPath;
+        File file = new File(outputPath);
+        file.delete();
 
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        scheduler.scheduleAtFixedRate(this::logWriteToFile, 3, 5, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(this::logWriteToFile, 5, 5, TimeUnit.SECONDS);
     }
 
     public void logSend(int messageId) {
@@ -43,6 +46,13 @@ public class Logger {
             }
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void logTesting(String string) {
+        logBuffer.add(string);
+        if (logBuffer.size() >= 100000) {
+            logWriteToFile();
         }
     }
 }

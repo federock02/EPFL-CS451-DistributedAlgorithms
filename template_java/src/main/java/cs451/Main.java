@@ -122,9 +122,15 @@ public class Main {
             // by initializing all the messages needed I can guarantee property PL3 - no creation
             int myId = parser.myId();
             for (int i = 1; i <= numMessages; i++) {
+                /*
+                if (i%1000 == 0) {
+                    System.out.println("Sent " + i);
+                }
+                */
                 myHost.sendMessage(new Message(i, i, myId), receiverHost);
                 // System.out.println("Added new message for host " + myId);
             }
+            System.out.println("Done");
         }
         else {
             myHost.startReceiver();

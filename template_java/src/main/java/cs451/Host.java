@@ -142,4 +142,8 @@ public class Host {
     public void flushLog () {
         logger.logWriteToFile();
     }
+
+    public void logTesting(String string) {
+        logger.logTesting(string);
+    }
 }
