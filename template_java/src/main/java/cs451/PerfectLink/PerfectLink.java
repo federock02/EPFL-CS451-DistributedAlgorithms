@@ -3,6 +3,7 @@ package cs451.PerfectLink;
 import cs451.Host;
 import cs451.Message;
 
+import javax.xml.crypto.Data;
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -66,35 +67,8 @@ public class PerfectLink {
     }
 
     public void startPerfectLinkSender(Host receiver, int maxNumPerPackage) {
-        this.receiverId = (byte) (receiver.getId() - 1);
-        this.receiverIp = receiver.getIp();
-        this.receiverPort = receiver.getPort();
-
+        startPerfectLinkSender(receiver);
         this.maxNumPerPackage = maxNumPerPackage;
-
-        try {
-            this.mySocket = new DatagramSocket(null);
-            this.mySocket.setReuseAddress(true);
-            InetAddress address = InetAddress.getByName(myIp);
-            this.mySocket.bind(new InetSocketAddress(address, myPort));
-        }
-        catch (SocketException | UnknownHostException e) {
-            e.printStackTrace();
-        }
-
-        // bounded queues with a maximum of 100 and 50 pending tasks
-        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(100);
-        BlockingQueue<Runnable> ackQueue = new LinkedBlockingQueue<>(50);
-
-        threadPool = new ThreadPoolExecutor(
-                2, 3, 60L, TimeUnit.SECONDS, taskQueue,
-                new ThreadPoolExecutor.CallerRunsPolicy());
-        ackListener = new ThreadPoolExecutor(
-                1, 2, 60L, TimeUnit.SECONDS, ackQueue,
-                new ThreadPoolExecutor.CallerRunsPolicy());
-
-        listenForAcks();
-        startResendScheduler();
     }
 
     public void startPerfectLinkSender(Host receiver) {
@@ -117,10 +91,10 @@ public class PerfectLink {
         BlockingQueue<Runnable> ackQueue = new LinkedBlockingQueue<>(50);
 
         threadPool = new ThreadPoolExecutor(
-                8, 8, 60L, TimeUnit.SECONDS, taskQueue,
+                1, 2, 10L, TimeUnit.SECONDS, taskQueue,
                 new ThreadPoolExecutor.CallerRunsPolicy());
         ackListener = new ThreadPoolExecutor(
-                4, 4, 60L, TimeUnit.SECONDS, ackQueue,
+                1, 2, 10L, TimeUnit.SECONDS, ackQueue,
                 new ThreadPoolExecutor.CallerRunsPolicy());
 
         listenForAcks();
@@ -144,7 +118,7 @@ public class PerfectLink {
         // bounded queue for managing pending tasks
         BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(50);
 
-        threadPool = new ThreadPoolExecutor(2,  2, 60L, TimeUnit.SECONDS,
+        threadPool = new ThreadPoolExecutor(2,  3, 10L, TimeUnit.SECONDS,
                 taskQueue, new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
@@ -184,7 +158,7 @@ public class PerfectLink {
     // send primitive for p2p perfect link
     public void send(Message message) {
         // System.out.println("Sending " + message.getId());
-        myHost.logTesting("Sending " + message.getId());
+        // myHost.logTesting("Sending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, System.currentTimeMillis()});
@@ -203,7 +177,7 @@ public class PerfectLink {
     // resend primitive, implements the same logic as sending
     public void resend(Message message) {
         // System.out.println("Resending " + message.getId());
-        myHost.logTesting("Resending " + message.getId());
+        // myHost.logTesting("Resending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -281,7 +255,8 @@ public class PerfectLink {
                     break;
                 }
                 for (Object[] messagePack : unacknowledgedMessages.values()) {
-                    threadPool.submit(() -> resend((Message) messagePack[0]));
+                    // threadPool.submit(() -> resend((Message) messagePack[0]));
+                    resend((Message) messagePack[0]);
                 }
             }
         });
@@ -334,7 +309,7 @@ public class PerfectLink {
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
                     }
                     // System.out.println("Received ack for message " + messageId);
-                    myHost.logTesting("Received ack for message " + messageId);
+                    // myHost.logTesting("Received ack for message " + messageId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -348,44 +323,57 @@ public class PerfectLink {
 
     // logic for receiving messages, by listening for incoming messages on UDP socket
     public void receiveMessages() {
+        BlockingQueue<DatagramPacket> messageQueue = new LinkedBlockingQueue<>(100);
         // System.out.println("Receiver " + this.ip + " : " + this.port);
-        threadPool.submit(this::receiverThreadMethod);
-    }
+        threadPool.submit(() -> {
+            try {
+                // buffer for incoming messages
+                byte[] buffer = new byte[2048];
 
-    private void receiverThreadMethod() {
-        try {
-            // buffer for incoming messages
-            byte[] buffer = new byte[2048];
-
-            while (true) {
-                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                try {
-                    if (!flagStopProcessing) {
+                while (!flagStopProcessing) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    try {
                         mySocket.receive(packet);
-                    }
-                } catch (SocketException e) {
-                    if (flagStopProcessing) {
-                        // socket is closed during shutdown, exit gracefully
-                        break;
-                    } else {
-                        // unexpected socket exception
-                        e.printStackTrace();
+                        if (!flagStopProcessing) {
+                            messageQueue.put(packet);
+                        }
+                    } catch (SocketException e) {
+                        if (flagStopProcessing) {
+                            // socket is closed during shutdown, exit gracefully
+                            break;
+                        } else {
+                            // unexpected socket exception
+                            e.printStackTrace();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                     }
                 }
-                InetAddress senderAddress = packet.getAddress();
-                int senderPort = packet.getPort();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
 
-                ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
-                int packetLength = packet.getLength();
+        threadPool.submit(() -> {
+            while (!flagStopProcessing) {
+                try {
+                    DatagramPacket packet = messageQueue.take();
+                    InetAddress senderAddress = packet.getAddress();
+                    int senderPort = packet.getPort();
 
-                if (!flagStopProcessing) {
-                    // process
-                    threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
+                    ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
+                    int packetLength = packet.getLength();
+
+                    if (!flagStopProcessing) {
+                        // process
+                        // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
+                        processMessage(byteBuffer, packetLength, senderAddress, senderPort);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        });
     }
 
     private void processMessage(ByteBuffer byteBuffer, int packetLength, InetAddress senderAddress, int senderPort) {
