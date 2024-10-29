@@ -3,7 +3,6 @@ package cs451.PerfectLink;
 import cs451.Host;
 import cs451.Message;
 
-import javax.xml.crypto.Data;
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -115,10 +114,11 @@ public class PerfectLink {
         }
 
         // bounded queue for managing pending tasks
-        //BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(5);
+        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(100);
 
-        //threadPool = new ThreadPoolExecutor(0,  5, 5L, TimeUnit.SECONDS,
-                //taskQueue, new ThreadPoolExecutor.CallerRunsPolicy());
+        threadPool = new ThreadPoolExecutor(
+                0,  5, 5L, TimeUnit.SECONDS, taskQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     public void stopProcessing() {
@@ -160,7 +160,7 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message) {
-        // System.out.println("Sending " + message.getId());
+        System.out.println("Sending " + message.getId());
         // myHost.logTesting("Sending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
@@ -175,9 +175,9 @@ public class PerfectLink {
                 }
             }
         }
-        while (unacknowledgedMessages.size() >= 100) {
+        while (unacknowledgedMessages.size() >= 500) {
             try {
-                sleep(50);
+                sleep(20);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
@@ -260,6 +260,7 @@ public class PerfectLink {
                 try {
                     // wait before sending again, with adaptive timeout
                     long dynamicTimeout = calculateTimeout();
+                    System.out.println((dynamicTimeout + 100));
                     sleep(dynamicTimeout + 100);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -276,13 +277,12 @@ public class PerfectLink {
     // adaptive timeout calculation
     private long calculateTimeout() {
         long timeout = (long) (estimatedRTT + 4 * devRTT);
-        return Math.max(timeout, 100);
+        return Math.min(Math.max(timeout, 100), 500);
     }
 
     // logic for receiving acknowledgments from receivers
     public void listenForAcks() {
         new Thread(() -> {
-            int i = 0;
             try {
                 byte[] buffer = new byte[5];
                 while (true) {
@@ -299,11 +299,6 @@ public class PerfectLink {
                             // unexpected socket exception
                             e.printStackTrace();
                         }
-                    }
-                    i += 1;
-                    if (i%100 == 0) {
-                        //System.out.println("Active Threads Thread Pool: " + threadPool.getActiveCount());
-                        //System.out.println("Active Threads Ack Pool: " + ackListener.getActiveCount());
                     }
 
                     ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
@@ -338,12 +333,16 @@ public class PerfectLink {
     // RECEIVING
     // -----------------------------------------------------------------------------------------------------------------
 
-    // logic for receiving messages, by listening for incoming messages on UDP socket
-    public void receiveMessages() {
-        BlockingQueue<DatagramPacket> messageQueue = new LinkedBlockingQueue<>(100);
-        //System.out.println("Receiver " + this.myIp + " : " + this.myPort);
-        new Thread(() -> {
-            int i = 0;
+    /*
+    // receiving thread
+    private class ReceivingThread extends Thread {
+        BlockingQueue<DatagramPacket> messageQueue;
+
+        public ReceivingThread(BlockingQueue<DatagramPacket> messageQueue) {
+            this.messageQueue = messageQueue;
+        }
+
+        public void run() {
             try {
                 // buffer for incoming messages
                 byte[] buffer = new byte[2048];
@@ -352,10 +351,6 @@ public class PerfectLink {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     try {
                         mySocket.receive(packet);
-                        i += 1;
-                        if (i%100 == 0) {
-                            //System.out.println("Active Threads Thread Pool: " + threadPool.getActiveCount());
-                        }
                         if (!flagStopProcessing) {
                             //System.out.println("Putting new package");
                             messageQueue.put(packet);
@@ -375,10 +370,17 @@ public class PerfectLink {
             } catch (IOException e) {
                 e.printStackTrace();
             }
-        }).start();
+        }
+    }
 
-        new Thread(() -> {
-            //System.out.println("Here 1");
+    public class AckThread extends Thread {
+        BlockingQueue<DatagramPacket> messageQueue;
+
+        public AckThread(BlockingQueue<DatagramPacket> messageQueue) {
+            this.messageQueue = messageQueue;
+        }
+
+        public void run() {
             while (!flagStopProcessing) {
                 try {
                     DatagramPacket packet = messageQueue.take();
@@ -397,28 +399,61 @@ public class PerfectLink {
                     Thread.currentThread().interrupt();
                 }
             }
-        }).start();
-        new Thread(() -> {
-            //System.out.println("Here 2");
-            while (!flagStopProcessing) {
-                try {
-                    DatagramPacket packet = messageQueue.take();
-                    InetAddress senderAddress = packet.getAddress();
-                    int senderPort = packet.getPort();
+        }
+    }
+    */
 
-                    ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
-                    int packetLength = packet.getLength();
+    // logic for receiving messages, by listening for incoming messages on UDP socket
+    public void receiveMessages() {
+        /*
+        BlockingQueue<DatagramPacket> messageQueue = new LinkedBlockingQueue<>(100);
+        //System.out.println("Receiver " + this.myIp + " : " + this.myPort);
+        ReceivingThread receivingThread1 = new ReceivingThread(messageQueue);
+        ReceivingThread receivingThread2 = new ReceivingThread(messageQueue);
+        receivingThread1.start();
+        receivingThread2.start();
 
-                    if (!flagStopProcessing) {
-                        // process
-                        // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
-                        processMessage(byteBuffer, packetLength, senderAddress, senderPort);
+        AckThread ackThread1 = new AckThread(messageQueue);
+        AckThread ackThread2 = new AckThread(messageQueue);
+        AckThread ackThread3 = new AckThread(messageQueue);
+        ackThread1.start();
+        ackThread2.start();
+        ackThread3.start();
+        */
+
+        threadPool.submit(() -> {
+            try {
+                // buffer for incoming messages
+                byte[] buffer = new byte[2048];
+
+                while (!flagStopProcessing) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    try {
+                        mySocket.receive(packet);
+                        InetAddress senderAddress = packet.getAddress();
+                        int senderPort = packet.getPort();
+
+                        ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
+                        int packetLength = packet.getLength();
+
+                        if (!flagStopProcessing) {
+                            // process
+                            threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
+                        }
+                    } catch (SocketException e) {
+                        if (flagStopProcessing) {
+                            // socket is closed during shutdown, exit gracefully
+                            break;
+                        } else {
+                            // unexpected socket exception
+                            e.printStackTrace();
+                        }
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
                 }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-        }).start();
+        });
     }
 
     private void processMessage(ByteBuffer byteBuffer, int packetLength, InetAddress senderAddress, int senderPort) {
@@ -439,12 +474,12 @@ public class PerfectLink {
             // deserialize and process the message
             Message message = Message.deserialize(messageBytes);
             int messageId = message.getId();
-            //System.out.println("Got message " + messageId);
+            // System.out.println("Got message " + messageId);
             byte senderId = message.getByteSenderId();
             int payloadAsInt = ByteBuffer.wrap(message.getPayload()).getInt();
 
-            // threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
-            sendAck(messageId, senderAddress, senderPort);
+            threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
+            // sendAck(messageId, senderAddress, senderPort);
 
             // check if the message is already delivered from sender
             Set<Integer> deliveredMessages;
@@ -455,7 +490,7 @@ public class PerfectLink {
 
                     // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
                     myHost.logDeliver(senderId, messageId);
-                    //System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
+                    System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
                 }
             } else {
                 // never received from sender, add to delivered and add sender
@@ -467,7 +502,7 @@ public class PerfectLink {
 
                 // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
                 myHost.logDeliver(senderId, messageId);
-                //System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
+                System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
             }
         }
     }
@@ -482,7 +517,7 @@ public class PerfectLink {
 
         byte[] byteAckData = byteBuffer.array();
 
-        //System.out.println("Acknowledged message: " + messageId + " to " + senderAddress + ":" + senderPort);
+        System.out.println("Acknowledged message: " + messageId + " to " + senderAddress + ":" + senderPort);
 
         DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, senderAddress, senderPort);
 
