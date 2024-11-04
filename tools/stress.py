@@ -159,6 +159,25 @@ class LatticeAgreementValidation:
 
         return (hostsfile, configfiles)
 
+# My class
+class Timer:
+    def __init__(self, wait_time):
+        self.wait_time = wait_time
+        self.finished = False
+
+    def run(self):
+        # Start a thread that waits for the specified time
+        thread = threading.Thread(target=self._wait_and_execute)
+        thread.start()
+
+    def _wait_and_execute(self):
+        # Wait for the specified time
+        time.sleep(self.wait_time)
+        # Set the flag to indicate the timer has finished
+        self.finished = True
+        print("Timer ended. Proceeding with the next steps.")
+
+
 
 class StressTest:
     def __init__(self, procs, concurrency, attempts, attemptsRatio):
@@ -358,6 +377,10 @@ def main(parser_results, testConfig):
         # Start the processes and get their PIDs
         procs = startProcesses(processes, runscript, hostsFile, configFiles, logsDir)
 
+        # my part
+        # Create the timer for closing test after a while
+        tr = Timer(30)
+
         # Create the stress test
         st = StressTest(
             procs,
@@ -379,7 +402,15 @@ def main(parser_results, testConfig):
         print("Resuming stopped processes.")
         st.continueStoppedProcesses()
 
-        input("Press `Enter` when all processes have finished processing messages.")
+        tr.run()
+        # Main code loop
+        while not tr.finished:
+            print("Waiting for timer to finish...")
+            time.sleep(1)  # Check every second
+
+        print("Timer finished, proceeding with code.")
+
+        # input("Press `Enter` when all processes have finished processing messages.")
 
         unterminated = st.remainingUnterminatedProcesses()
         if unterminated is not None:

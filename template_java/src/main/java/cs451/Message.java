@@ -41,6 +41,12 @@ public class Message {
         this.senderId = (byte) (senderId - 1);
     }
 
+    public Message(Message message) {
+        this.id = message.id;
+        this.payload = message.payload;
+        this.senderId = message.getByteSenderId();
+    }
+
     public int getId() {
         return id;
     }
