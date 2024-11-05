@@ -139,8 +139,9 @@ public class Host {
         logger.logSend(messageId);
     }
 
-    public void flushLog () {
+    public void flushLog() {
         logger.logWriteToFile();
+        logger.closeWriter();
     }
 
     public void logTesting(String string) {

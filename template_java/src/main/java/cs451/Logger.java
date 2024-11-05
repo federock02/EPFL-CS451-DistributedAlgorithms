@@ -12,11 +12,28 @@ import java.util.concurrent.TimeUnit;
 public class Logger {
     private final ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
     private String outputPath;
+    private static final int BUFFER_SIZE = 1000;
+    private BufferedWriter writer;
 
     public Logger(String outputPath) {
         this.outputPath = outputPath;
         File file = new File(outputPath);
+
+        // ensure the parent directory exists
+        File parentDir = file.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            if (!parentDir.mkdirs()) {
+                System.err.println("Failed to create directory: " + parentDir);
+            }
+        }
+
         file.delete();
+
+        try {
+            this.writer = new BufferedWriter(new FileWriter(outputPath, true));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleAtFixedRate(this::logWriteToFile, 5, 5, TimeUnit.SECONDS);
@@ -25,24 +42,35 @@ public class Logger {
     public void logSend(int messageId) {
         logBuffer.add("b " + messageId);
         // actually write to file only after some events
-        if (logBuffer.size() >= 100000) {
+        if (logBuffer.size() >= BUFFER_SIZE) {
             logWriteToFile();
         }
     }
 
     public void logDeliver(byte senderId, int messageId) {
         logBuffer.add("d " + ((int) senderId + 1) + " " + messageId);
+        // System.out.println("Logged delivery of " + messageId + " from " + ((int) senderId + 1));
         // actually write to file only after some events
-        if (logBuffer.size() >= 100000) {
+        if (logBuffer.size() >= BUFFER_SIZE) {
             logWriteToFile();
         }
     }
 
-    public void logWriteToFile() {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(this.outputPath, true))) {
+    public synchronized void logWriteToFile() {
+        try {
             while (!logBuffer.isEmpty()) {
-                writer.write(logBuffer.poll());
-                writer.newLine();
+                writer.write(logBuffer.poll() + "\n");
+            }
+            writer.flush();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void closeWriter() {
+        try {
+            if (writer != null) {
+                writer.close();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -51,7 +79,7 @@ public class Logger {
 
     public void logTesting(String string) {
         logBuffer.add(string);
-        if (logBuffer.size() >= 100000) {
+        if (logBuffer.size() >= BUFFER_SIZE) {
             logWriteToFile();
         }
     }

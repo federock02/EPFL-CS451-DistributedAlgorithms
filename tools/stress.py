@@ -379,7 +379,7 @@ def main(parser_results, testConfig):
 
         # my part
         # Create the timer for closing test after a while
-        tr = Timer(30)
+        # tr = Timer(30)
 
         # Create the stress test
         st = StressTest(
@@ -402,15 +402,17 @@ def main(parser_results, testConfig):
         print("Resuming stopped processes.")
         st.continueStoppedProcesses()
 
-        tr.run()
+        # tr.run()
         # Main code loop
+        """
         while not tr.finished:
             print("Waiting for timer to finish...")
             time.sleep(1)  # Check every second
 
         print("Timer finished, proceeding with code.")
+        """
 
-        # input("Press `Enter` when all processes have finished processing messages.")
+        input("Press `Enter` when all processes have finished processing messages.")
 
         unterminated = st.remainingUnterminatedProcesses()
         if unterminated is not None:

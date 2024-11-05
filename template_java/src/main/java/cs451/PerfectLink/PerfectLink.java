@@ -67,15 +67,15 @@ public class PerfectLink {
     // private final Map<Byte, Set<Integer>> deliveredMap = new ConcurrentHashMap<>();
     private final Map<Byte, LinkedList<int[]>> deliveredMap = new ConcurrentHashMap<>();
     // pool for ByteBuffers to avoid frequent allocations when receiving
-    ArrayBlockingQueue<ByteBuffer> byteBufferPoolReceiving = new ArrayBlockingQueue<>(10);
+    private final ArrayBlockingQueue<ByteBuffer> byteBufferPoolReceiving = new ArrayBlockingQueue<>(10);
     // receiving buffer size
     private static final int RECEIVING_BUFF_SIZE = 2048;
     // pool for ByteBuffers to avoid frequent allocations when sending acks
-    ArrayBlockingQueue<ByteBuffer> byteBufferPoolAcks = new ArrayBlockingQueue<>(10);
+    private final ArrayBlockingQueue<ByteBuffer> byteBufferPoolAcks = new ArrayBlockingQueue<>(10);
     // ack buffer size
     private static final int ACK_BUFF_SIZE = 5;
     // pool of DatagramPackets for sending acks
-    ArrayBlockingQueue<DatagramPacket> datagramPacketsPool = new ArrayBlockingQueue<>(10);
+    private final ArrayBlockingQueue<DatagramPacket> datagramPacketsPool = new ArrayBlockingQueue<>(10);
 
     // flag for sending done
     private boolean sendingDone = false;
@@ -287,7 +287,7 @@ public class PerfectLink {
         while (!messagePackage.isEmpty()) {
             if (!flagStopProcessing) {
                 Message message = messagePackage.poll();
-                //System.out.println("Sending " + message.getId());
+                // System.out.println("Sending " + message.getId());
                 byte[] serializedMessage = message.serialize();
 
                 buffer.putInt(serializedMessage.length);
@@ -336,14 +336,15 @@ public class PerfectLink {
                     Object[] messagePack = unacknowledgedMessages.get(messageId);
                     // threadPool.submit(() -> resend((Message) messagePack[0]));
                     // System.out.println("Resend for: " + messageId);
-                    byte counter = (byte) messagePack[2];
-                    messagePack[2] = (byte) (counter - 1);
-                    if ((byte) messagePack[2] == 0) {
-                        resend(new Message((Message) messagePack[0]));
-                        unacknowledgedMessages.remove(messageId);
-                    }
-                    else {
-                        resend((Message) messagePack[0]);
+                    if (messagePack != null) {
+                        byte counter = (byte) messagePack[2];
+                        messagePack[2] = (byte) (counter - 1);
+                        if ((byte) messagePack[2] == 0) {
+                            resend(new Message((Message) messagePack[0]));
+                            unacknowledgedMessages.remove(messageId);
+                        } else {
+                            resend((Message) messagePack[0]);
+                        }
                     }
                 }
             }
@@ -489,7 +490,7 @@ public class PerfectLink {
     public void receiveMessages() {
         /*
         BlockingQueue<DatagramPacket> messageQueue = new LinkedBlockingQueue<>(100);
-        //System.out.println("Receiver " + this.myIp + " : " + this.myPort);
+        // System.out.println("Receiver " + this.myIp + " : " + this.myPort);
         ReceivingThread receivingThread1 = new ReceivingThread(messageQueue);
         ReceivingThread receivingThread2 = new ReceivingThread(messageQueue);
         receivingThread1.start();
@@ -503,6 +504,7 @@ public class PerfectLink {
         ackThread3.start();
         */
 
+        /*
         threadPool.submit(() -> {
             try {
                 DatagramPacket packet = new DatagramPacket(new byte[RECEIVING_BUFF_SIZE], RECEIVING_BUFF_SIZE);
@@ -548,6 +550,51 @@ public class PerfectLink {
                 e.printStackTrace();
             }
         });
+        */
+
+        try {
+            DatagramPacket packet = new DatagramPacket(new byte[RECEIVING_BUFF_SIZE], RECEIVING_BUFF_SIZE);
+
+            while (!flagStopProcessing) {
+                try {
+                    mySocket.receive(packet);
+                    InetAddress senderAddress = packet.getAddress();
+                    int senderPort = packet.getPort();
+
+                    // ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
+                    ByteBuffer byteBuffer = byteBufferPoolReceiving.poll();
+                    if (byteBuffer == null) {
+                        // if the pool is empty, allocate a new one
+                        byteBuffer = ByteBuffer.allocate(RECEIVING_BUFF_SIZE);
+                    } else {
+                        // clear the buffer before reuse
+                        byteBuffer.clear();
+                    }
+
+                    int packetLength = packet.getLength();
+
+                    // Wrap the packet data into the ByteBuffer
+                    byteBuffer.put(packet.getData(), 0, packetLength);
+                    byteBuffer.flip();
+
+                    if (!flagStopProcessing) {
+                        // process
+                        // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
+                        processMessage(byteBuffer, packetLength, senderAddress, senderPort);
+                    }
+                } catch (SocketException e) {
+                    if (flagStopProcessing) {
+                        // socket is closed during shutdown, exit gracefully
+                        break;
+                    } else {
+                        // unexpected socket exception
+                        e.printStackTrace();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private void processMessage(ByteBuffer byteBuffer, int packetLength, InetAddress senderAddress, int senderPort) {
@@ -580,7 +627,11 @@ public class PerfectLink {
             // Set<Integer> deliveredMessages;
             LinkedList<int[]> deliveredMessages;
             synchronized (deliveredMap) {
-                if ((deliveredMessages = deliveredMap.get(senderId)) != null) {
+                deliveredMessages = deliveredMap.get(senderId);
+
+                // System.out.println("------");
+                // System.out.println("Sender " + senderId + " adding " + messageId);
+                if (deliveredMessages != null) {
                 /*
                 if (!deliveredMessages.contains(messageId)) {
                     // add to delivered
@@ -591,15 +642,14 @@ public class PerfectLink {
                     // System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
                 }
                 */
-                    i = -1;
                     i = addMessage(deliveredMessages, messageId);
                     // System.out.println(senderId + " list size: " + deliveredMessages.size());
                     if (i != -1) {
                         // message wasn't already delivered
                         // deliveredMessages.set(messageId);
 
-                        threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
-                        // myHost.logDeliver(senderId, messageId);
+                        // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
+                        myHost.logDeliver(senderId, messageId);
                         // System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
                     }
                 } else {
@@ -669,11 +719,19 @@ public class PerfectLink {
     private int addMessage(LinkedList<int[]> deliveredMessages, int messageId) {
         int start = 0;
         int end = deliveredMessages.size() - 1;
+        /*
+        for (int[] range : deliveredMessages) {
+            System.out.println("(" + range[0] + ":" + range[1] + ")");
+        }
+        */
         int middle = 0;
 
         // binary search to find if a message has been delivered in the compressed structure
         while (start <= end) {
             middle = (start + end) / 2;
+            // System.out.println("start: " + start);
+            // System.out.println("end: " + end);
+            // System.out.println("middle: " + middle);
 
             int[] range = deliveredMessages.get(middle);
             if (range[0] <= messageId && messageId <= range[1]) {
@@ -681,6 +739,7 @@ public class PerfectLink {
                 return -1;
             }
             else if (range[0] > messageId) {
+                // System.out.println("Case 1, " + range[0] + ", " + messageId);
                 // lower bound of range is higher than message id
                     if (range[0] == messageId + 1) {
                         // message id can extend the range by 1 on the left
@@ -699,11 +758,12 @@ public class PerfectLink {
                 end = middle - 1;
             }
             else {
-                // upper bound of range is higher than message id
+                // System.out.println("Case 1, " + range[1] + ", " + messageId);
+                // upper bound of range is lower than message id
                 if (range[1] == messageId - 1) {
                     // message id can extend the range by 1 on the right
                     range[1] = messageId;
-                    if (middle < deliveredMessages.size() - 1) {
+                    if (middle < (deliveredMessages.size() - 1)) {
                         // getting following range to check if the two adjacent ranges can be compressed
                         int[] range2 = deliveredMessages.get(middle + 1);
                         if (range2[0] == range[1] + 1) {
@@ -713,10 +773,12 @@ public class PerfectLink {
                     }
                     return middle;
                 }
-                start = middle + 1;
+                middle += 1;
+                start = middle;
             }
         }
         // message not found and cannot extend any range, just add it
+        // System.out.println("Adding in position " + middle);
         deliveredMessages.add(middle, new int[] {messageId, messageId});
         return middle;
     }
