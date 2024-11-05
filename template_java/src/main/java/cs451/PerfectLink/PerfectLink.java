@@ -64,7 +64,6 @@ public class PerfectLink {
     private final Queue<Queue<Message>> listPool = new LinkedList<>();
 
     // structure for already delivered messages in receiving phase
-    // private final Map<Byte, Set<Integer>> deliveredMap = new ConcurrentHashMap<>();
     private final Map<Byte, LinkedList<int[]>> deliveredMap = new ConcurrentHashMap<>();
     // pool for ByteBuffers to avoid frequent allocations when receiving
     private final ArrayBlockingQueue<ByteBuffer> byteBufferPoolReceiving = new ArrayBlockingQueue<>(10);
@@ -110,18 +109,6 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
-        /*
-        // bounded queues with a maximum of 100 and 50 pending tasks
-        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(5);
-        BlockingQueue<Runnable> ackQueue = new LinkedBlockingQueue<>(5);
-        threadPool = new ThreadPoolExecutor(
-                0, 2, 5L, TimeUnit.SECONDS, taskQueue,
-                new ThreadPoolExecutor.CallerRunsPolicy());
-        ackListener = new ThreadPoolExecutor(
-                0, 2, 5L, TimeUnit.SECONDS, ackQueue,
-                new ThreadPoolExecutor.CallerRunsPolicy());
-        */
-
         listenForAcks();
         startResendScheduler();
     }
@@ -162,30 +149,15 @@ public class PerfectLink {
         if (threadPool != null) {
             threadPool.shutdown();
         }
-        /*
-        if (ackListener != null) {
-            ackListener.shutdown();
-        }
-        */
         if (mySocket != null && !mySocket.isClosed()) {
             try {
                 if (threadPool != null && !threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
                     threadPool.shutdownNow();
                 }
-                /*
-                if (ackListener != null && !ackListener.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
-                    ackListener.shutdownNow();
-                }
-                */
             } catch (InterruptedException e) {
                 if (threadPool != null) {
                     threadPool.shutdownNow();
                 }
-                /*
-                if (ackListener != null) {
-                    ackListener.shutdownNow();
-                }
-                */
                 Thread.currentThread().interrupt();
             } finally {
                 if (mySocket != null && !mySocket.isClosed()) {
@@ -202,8 +174,6 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message) {
-        // System.out.println("Sending " + message.getId());
-        // myHost.logTesting("Sending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, RESEND_TIMES, System.currentTimeMillis()});
@@ -235,8 +205,6 @@ public class PerfectLink {
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message) {
-        // System.out.println("Resending " + message.getId());
-        // myHost.logTesting("Resending " + message.getId());
         synchronized (queueLock) {
             messagePackage.add(message);
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -287,13 +255,9 @@ public class PerfectLink {
         while (!messagePackage.isEmpty()) {
             if (!flagStopProcessing) {
                 Message message = messagePackage.poll();
-                // System.out.println("Sending " + message.getId());
                 byte[] serializedMessage = message.serialize();
-
                 buffer.putInt(serializedMessage.length);
-
                 buffer.put(serializedMessage);
-                //System.out.println("Sent message: " + message.getId() + " to " + receiver.getIp() + ":" + receiver.getPort());
             }
         }
         returnList(messagePackage);
@@ -307,7 +271,6 @@ public class PerfectLink {
 
             // create packet with data, size of data  and receiver info
             DatagramPacket packet = new DatagramPacket(byteData, byteData.length, receiverAddress, this.receiverPort);
-            // System.out.println("Sending message of length " + byteData.length + " to: " + receiver.getIp() + " : " + receiver.getPort());
 
             // send the packet through the UDP socket
             if (!flagStopProcessing) {
@@ -326,16 +289,13 @@ public class PerfectLink {
                 try {
                     // wait before sending again, with adaptive timeout
                     long dynamicTimeout = calculateTimeout();
-                    // System.out.println((dynamicTimeout + 100));
-                    sleep(dynamicTimeout + 100);
+                    sleep(dynamicTimeout);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
                 for (Integer messageId : unacknowledgedMessages.keySet()) {
                     Object[] messagePack = unacknowledgedMessages.get(messageId);
-                    // threadPool.submit(() -> resend((Message) messagePack[0]));
-                    // System.out.println("Resend for: " + messageId);
                     if (messagePack != null) {
                         byte counter = (byte) messagePack[2];
                         messagePack[2] = (byte) (counter - 1);
@@ -363,9 +323,7 @@ public class PerfectLink {
         ByteBuffer byteBuffer = ByteBuffer.allocate(5);
         new Thread(() -> {
             try {
-                // byte[] buffer = new byte[5];
                 while (true) {
-                    // DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     try {
                         if (!flagStopProcessing) {
                             mySocket.receive(packet);
@@ -379,8 +337,6 @@ public class PerfectLink {
                             e.printStackTrace();
                         }
                     }
-
-                    // ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
                     byteBuffer.clear();
                     byteBuffer.put(packet.getData());
                     byteBuffer.flip();
@@ -403,8 +359,6 @@ public class PerfectLink {
                         this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
                     }
-                    // System.out.println("Received ack for message " + messageId);
-                    // myHost.logTesting("Received ack for message " + messageId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -416,142 +370,8 @@ public class PerfectLink {
     // RECEIVING
     // -----------------------------------------------------------------------------------------------------------------
 
-    /*
-    // receiving thread
-    private class ReceivingThread extends Thread {
-        BlockingQueue<DatagramPacket> messageQueue;
-
-        public ReceivingThread(BlockingQueue<DatagramPacket> messageQueue) {
-            this.messageQueue = messageQueue;
-        }
-
-        public void run() {
-            try {
-                // buffer for incoming messages
-                byte[] buffer = new byte[2048];
-
-                while (!flagStopProcessing) {
-                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                    try {
-                        mySocket.receive(packet);
-                        if (!flagStopProcessing) {
-                            //System.out.println("Putting new package");
-                            messageQueue.put(packet);
-                        }
-                    } catch (SocketException e) {
-                        if (flagStopProcessing) {
-                            // socket is closed during shutdown, exit gracefully
-                            break;
-                        } else {
-                            // unexpected socket exception
-                            e.printStackTrace();
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    public class AckThread extends Thread {
-        BlockingQueue<DatagramPacket> messageQueue;
-
-        public AckThread(BlockingQueue<DatagramPacket> messageQueue) {
-            this.messageQueue = messageQueue;
-        }
-
-        public void run() {
-            while (!flagStopProcessing) {
-                try {
-                    DatagramPacket packet = messageQueue.take();
-                    InetAddress senderAddress = packet.getAddress();
-                    int senderPort = packet.getPort();
-
-                    ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
-                    int packetLength = packet.getLength();
-
-                    if (!flagStopProcessing) {
-                        // process
-                        // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
-                        processMessage(byteBuffer, packetLength, senderAddress, senderPort);
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
-    */
-
     // logic for receiving messages, by listening for incoming messages on UDP socket
     public void receiveMessages() {
-        /*
-        BlockingQueue<DatagramPacket> messageQueue = new LinkedBlockingQueue<>(100);
-        // System.out.println("Receiver " + this.myIp + " : " + this.myPort);
-        ReceivingThread receivingThread1 = new ReceivingThread(messageQueue);
-        ReceivingThread receivingThread2 = new ReceivingThread(messageQueue);
-        receivingThread1.start();
-        receivingThread2.start();
-
-        AckThread ackThread1 = new AckThread(messageQueue);
-        AckThread ackThread2 = new AckThread(messageQueue);
-        AckThread ackThread3 = new AckThread(messageQueue);
-        ackThread1.start();
-        ackThread2.start();
-        ackThread3.start();
-        */
-
-        /*
-        threadPool.submit(() -> {
-            try {
-                DatagramPacket packet = new DatagramPacket(new byte[RECEIVING_BUFF_SIZE], RECEIVING_BUFF_SIZE);
-
-                while (!flagStopProcessing) {
-                    try {
-                        mySocket.receive(packet);
-                        InetAddress senderAddress = packet.getAddress();
-                        int senderPort = packet.getPort();
-
-                        // ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
-                        ByteBuffer byteBuffer = byteBufferPoolReceiving.poll();
-                        if (byteBuffer == null) {
-                            // if the pool is empty, allocate a new one
-                            byteBuffer = ByteBuffer.allocate(RECEIVING_BUFF_SIZE);
-                        } else {
-                            // clear the buffer before reuse
-                            byteBuffer.clear();
-                        }
-
-                        int packetLength = packet.getLength();
-
-                        // Wrap the packet data into the ByteBuffer
-                        byteBuffer.put(packet.getData(), 0, packetLength);
-                        byteBuffer.flip();
-
-                        if (!flagStopProcessing) {
-                            // process
-                            // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
-                            processMessage(byteBuffer, packetLength, senderAddress, senderPort);
-                        }
-                    } catch (SocketException e) {
-                        if (flagStopProcessing) {
-                            // socket is closed during shutdown, exit gracefully
-                            break;
-                        } else {
-                            // unexpected socket exception
-                            e.printStackTrace();
-                        }
-                    }
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
-        */
-
         try {
             DatagramPacket packet = new DatagramPacket(new byte[RECEIVING_BUFF_SIZE], RECEIVING_BUFF_SIZE);
 
@@ -561,7 +381,6 @@ public class PerfectLink {
                     InetAddress senderAddress = packet.getAddress();
                     int senderPort = packet.getPort();
 
-                    // ByteBuffer byteBuffer = ByteBuffer.wrap(packet.getData());
                     ByteBuffer byteBuffer = byteBufferPoolReceiving.poll();
                     if (byteBuffer == null) {
                         // if the pool is empty, allocate a new one
@@ -573,13 +392,12 @@ public class PerfectLink {
 
                     int packetLength = packet.getLength();
 
-                    // Wrap the packet data into the ByteBuffer
+                    // wrap the packet data into the ByteBuffer
                     byteBuffer.put(packet.getData(), 0, packetLength);
                     byteBuffer.flip();
 
                     if (!flagStopProcessing) {
                         // process
-                        // threadPool.submit(() -> processMessage(byteBuffer, packetLength, senderAddress, senderPort));
                         processMessage(byteBuffer, packetLength, senderAddress, senderPort);
                     }
                 } catch (SocketException e) {
@@ -600,7 +418,6 @@ public class PerfectLink {
     private void processMessage(ByteBuffer byteBuffer, int packetLength, InetAddress senderAddress, int senderPort) {
         int i;
         while (byteBuffer.position() < packetLength) {
-            //System.out.println("Processing package");
             // extract size of next message
             int messageSize = byteBuffer.getInt();
 
@@ -616,55 +433,29 @@ public class PerfectLink {
             // deserialize and process the message
             Message message = Message.deserialize(messageBytes);
             int messageId = message.getId();
-            // System.out.println("Got message " + messageId);
             byte senderId = message.getByteSenderId();
-            // int payloadAsInt = ByteBuffer.wrap(message.getPayload()).getInt();
 
             threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
-            // sendAck(messageId, senderAddress, senderPort);
 
             // check if the message is already delivered from sender
-            // Set<Integer> deliveredMessages;
             LinkedList<int[]> deliveredMessages;
             synchronized (deliveredMap) {
                 deliveredMessages = deliveredMap.get(senderId);
-
-                // System.out.println("------");
-                // System.out.println("Sender " + senderId + " adding " + messageId);
                 if (deliveredMessages != null) {
-                /*
-                if (!deliveredMessages.contains(messageId)) {
-                    // add to delivered
-                    deliveredMessages.add(messageId);
-
-                    // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
-                    myHost.logDeliver(senderId, messageId);
-                    // System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
-                }
-                */
                     i = addMessage(deliveredMessages, messageId);
-                    // System.out.println(senderId + " list size: " + deliveredMessages.size());
                     if (i != -1) {
                         // message wasn't already delivered
-                        // deliveredMessages.set(messageId);
-
-                        // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
                         myHost.logDeliver(senderId, messageId);
-                        // System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
                     }
                 } else {
                     // never received from sender, add to delivered and add sender
-                    // deliveredMessages = ConcurrentHashMap.newKeySet();
                     deliveredMessages = new LinkedList<>();
 
                     // add to delivered
                     deliveredMessages.add(new int[] {messageId, messageId});
                     deliveredMap.put(senderId, deliveredMessages);
-                    // correction since messages ids start from 1
 
-                    // threadPool.submit(() -> myHost.logDeliver(senderId, messageId));
                     myHost.logDeliver(senderId, messageId);
-                    // System.out.println("Delivered message " + messageId + " from " + (senderId + 1));
                 }
             }
         }
@@ -692,9 +483,6 @@ public class PerfectLink {
 
         byteBufferPoolAcks.offer(byteBuffer);
 
-        // System.out.println("Acknowledged message: " + messageId + " to " + senderAddress + ":" + senderPort);
-
-        // DatagramPacket ackPacket = new DatagramPacket(byteAckData, byteAckData.length, senderAddress, senderPort);
         DatagramPacket ackPacket = datagramPacketsPool.poll();
         if (ackPacket == null) {
             ackPacket = new DatagramPacket(byteAckData, byteAckData.length, senderAddress, senderPort);
@@ -719,19 +507,11 @@ public class PerfectLink {
     private int addMessage(LinkedList<int[]> deliveredMessages, int messageId) {
         int start = 0;
         int end = deliveredMessages.size() - 1;
-        /*
-        for (int[] range : deliveredMessages) {
-            System.out.println("(" + range[0] + ":" + range[1] + ")");
-        }
-        */
         int middle = 0;
 
         // binary search to find if a message has been delivered in the compressed structure
         while (start <= end) {
             middle = (start + end) / 2;
-            // System.out.println("start: " + start);
-            // System.out.println("end: " + end);
-            // System.out.println("middle: " + middle);
 
             int[] range = deliveredMessages.get(middle);
             if (range[0] <= messageId && messageId <= range[1]) {
@@ -739,7 +519,6 @@ public class PerfectLink {
                 return -1;
             }
             else if (range[0] > messageId) {
-                // System.out.println("Case 1, " + range[0] + ", " + messageId);
                 // lower bound of range is higher than message id
                     if (range[0] == messageId + 1) {
                         // message id can extend the range by 1 on the left
@@ -758,7 +537,6 @@ public class PerfectLink {
                 end = middle - 1;
             }
             else {
-                // System.out.println("Case 1, " + range[1] + ", " + messageId);
                 // upper bound of range is lower than message id
                 if (range[1] == messageId - 1) {
                     // message id can extend the range by 1 on the right
@@ -778,7 +556,6 @@ public class PerfectLink {
             }
         }
         // message not found and cannot extend any range, just add it
-        // System.out.println("Adding in position " + middle);
         deliveredMessages.add(middle, new int[] {messageId, messageId});
         return middle;
     }

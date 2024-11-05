@@ -49,7 +49,6 @@ public class Logger {
 
     public void logDeliver(byte senderId, int messageId) {
         logBuffer.add("d " + ((int) senderId + 1) + " " + messageId);
-        // System.out.println("Logged delivery of " + messageId + " from " + ((int) senderId + 1));
         // actually write to file only after some events
         if (logBuffer.size() >= BUFFER_SIZE) {
             logWriteToFile();
@@ -74,13 +73,6 @@ public class Logger {
             }
         } catch (IOException e) {
             e.printStackTrace();
-        }
-    }
-
-    public void logTesting(String string) {
-        logBuffer.add(string);
-        if (logBuffer.size() >= BUFFER_SIZE) {
-            logWriteToFile();
         }
     }
 }

@@ -1,6 +1,5 @@
 package cs451;
 
-import java.io.*;
 import java.nio.ByteBuffer;
 
 public class Message {
@@ -60,7 +59,6 @@ public class Message {
     }
 
     public byte getByteSenderId() {
-        // System.out.println("Byte sender id " + this.senderId);
         return this.senderId;
     }
 
@@ -72,8 +70,6 @@ public class Message {
         buffer.putInt(this.id);
         buffer.put(this.senderId);
         buffer.put(payload);
-
-        // System.out.println("Sender id: " + senderId);
 
         return buffer.array();
     }
