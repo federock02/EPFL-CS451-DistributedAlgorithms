@@ -143,8 +143,4 @@ public class Host {
         logger.logWriteToFile();
         logger.closeWriter();
     }
-
-    public void logTesting(String string) {
-        logger.logTesting(string);
-    }
 }
