@@ -21,6 +21,8 @@ public class Host {
     private static final String IP_START_REGEX = "/";
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
 
+    private boolean flagStopProcessing = false;
+
     // logger
     private Logger logger;
 
@@ -74,6 +76,7 @@ public class Host {
     // -----------------------------------------------------------------------------------------------------------------
 
     public void stopProcessing() {
+        flagStopProcessing = true;
         for (PerfectLink perfectLink : p2pLinks.values()) {
             perfectLink.stopProcessing();
         }
@@ -106,14 +109,15 @@ public class Host {
     // -----------------------------------------------------------------------------------------------------------------
 
     public void sendMessage(Message message, Host receiver) {
-        p2pLinks.get(receiver.getId()).send(message);
-        logSend(message.getId());
+        if (!flagStopProcessing) {
+            p2pLinks.get(receiver.getId()).send(message);
+            logSend(message.getId());
+        }
     }
 
     public void sendMessages(ConcurrentLinkedQueue<Message> messagesToSend, Host receiver) {
         for (Message message : messagesToSend) {
-            p2pLinks.get(receiver.getId()).send(message);
-            logSend(message.getId());
+            sendMessage(message, receiver);
         }
     }
 

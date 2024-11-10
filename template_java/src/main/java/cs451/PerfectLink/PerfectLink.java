@@ -452,7 +452,7 @@ public class PerfectLink {
                     deliveredMessages = new LinkedList<>();
 
                     // add to delivered
-                    deliveredMessages.add(new int[] {messageId, messageId});
+                    deliveredMessages.add(new int[]{messageId, messageId});
                     deliveredMap.put(senderId, deliveredMessages);
 
                     myHost.logDeliver(senderId, messageId);
