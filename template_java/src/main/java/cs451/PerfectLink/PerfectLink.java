@@ -50,8 +50,6 @@ public class PerfectLink {
     private int maxNumPerPackage = 8;
     // timeout for sending a package, even if it was not filled with maxNumPerPackage messages
     private static final long SEND_TIMER = 150;
-    // amount of times each message will be resent before dropping it
-    private static final byte RESEND_TIMES = 10;
     // lock for managing access to queue of messages to send
     private final Object queueLock = new Object();
     // executor that manages the timeout for sending the package
@@ -176,7 +174,7 @@ public class PerfectLink {
     public void send(Message message) {
         synchronized (queueLock) {
             messagePackage.add(message);
-            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, RESEND_TIMES, System.currentTimeMillis()});
+            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, System.currentTimeMillis()});
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
                 toSend.addAll(messagePackage);
@@ -297,14 +295,8 @@ public class PerfectLink {
                 for (Integer messageId : unacknowledgedMessages.keySet()) {
                     Object[] messagePack = unacknowledgedMessages.get(messageId);
                     if (messagePack != null) {
-                        byte counter = (byte) messagePack[2];
-                        messagePack[2] = (byte) (counter - 1);
-                        if ((byte) messagePack[2] == 0) {
-                            resend(new Message((Message) messagePack[0]));
-                            unacknowledgedMessages.remove(messageId);
-                        } else {
-                            resend((Message) messagePack[0]);
-                        }
+                        resend((Message) messagePack[0]);
+                        // System.out.println("Resending " + messageId);
                     }
                 }
             }
@@ -314,7 +306,7 @@ public class PerfectLink {
     // adaptive timeout calculation
     private long calculateTimeout() {
         long timeout = (long) (estimatedRTT + 4 * devRTT);
-        return Math.min(Math.max(timeout, 100), 500);
+        return Math.min(Math.max(timeout, 100), 1000);
     }
 
     // logic for receiving acknowledgments from receivers
@@ -350,9 +342,10 @@ public class PerfectLink {
 
                     long currentTime = System.currentTimeMillis();
                     if (unacknowledgedMessages.containsKey(messageId)) {
+                        // System.out.println("Received ack for " + messageId);
                         Object[] messagePack = unacknowledgedMessages.get(messageId);
                         unacknowledgedMessages.remove(messageId);
-                        long sendTime = (long) messagePack[3];
+                        long sendTime = (long) messagePack[2];
                         long sampleRTT = currentTime - sendTime;
 
                         // update estimated RTT and deviation
@@ -399,6 +392,9 @@ public class PerfectLink {
                     if (!flagStopProcessing) {
                         // process
                         processMessage(byteBuffer, packetLength, senderAddress, senderPort);
+
+                        // give back the byte buffer
+                        byteBufferPoolReceiving.offer(byteBuffer);
                     }
                 } catch (SocketException e) {
                     if (flagStopProcessing) {
@@ -435,7 +431,7 @@ public class PerfectLink {
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
 
-            threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
+            // System.out.println("Received message " + messageId + " from " + (senderId + 1));
 
             // check if the message is already delivered from sender
             LinkedList<int[]> deliveredMessages;
@@ -458,10 +454,10 @@ public class PerfectLink {
                     myHost.logDeliver(senderId, messageId);
                 }
             }
-        }
 
-        // give back the byte buffer
-        byteBufferPoolReceiving.offer(byteBuffer);
+            threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
+            // sendAck(messageId, senderAddress, senderPort);
+        }
     }
 
     // sending ack for received message
@@ -481,8 +477,6 @@ public class PerfectLink {
 
         byte[] byteAckData = byteBuffer.array();
 
-        byteBufferPoolAcks.offer(byteBuffer);
-
         DatagramPacket ackPacket = datagramPacketsPool.poll();
         if (ackPacket == null) {
             ackPacket = new DatagramPacket(byteAckData, byteAckData.length, senderAddress, senderPort);
@@ -501,6 +495,7 @@ public class PerfectLink {
             }
         }
 
+        byteBufferPoolAcks.offer(byteBuffer);
         datagramPacketsPool.offer(ackPacket);
     }
 

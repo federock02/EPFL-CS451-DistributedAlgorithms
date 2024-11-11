@@ -127,7 +127,6 @@ public class Host {
 
     // logic for receiving messages, by listening for incoming messages on UDP socket
     public void receiveMessages() {
-        // System.out.println("Receiver " + this.ip + " : " + this.port);
         p2pReceiver.receiveMessages();
     }
 

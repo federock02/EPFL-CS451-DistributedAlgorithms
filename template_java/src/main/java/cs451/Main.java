@@ -38,9 +38,6 @@ public class Main {
         // initialize signal handler
         initSignalHandlers();
 
-        // thread pool for multithreading, with limit at 8
-        ExecutorService threadPool = Executors.newFixedThreadPool(8);
-
         // example
         long pid = ProcessHandle.current().pid();
         System.out.println("My PID: " + pid + "\n");
@@ -131,9 +128,6 @@ public class Main {
             myHost.startReceiver();
             myHost.receiveMessages();
         }
-
-
-        threadPool.shutdown();
 
         // After a process finishes broadcasting,
         // it waits forever for the delivery of messages.
