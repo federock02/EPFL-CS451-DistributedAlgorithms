@@ -39,7 +39,7 @@ public class Logger {
         scheduler.scheduleAtFixedRate(this::logWriteToFile, 5, 5, TimeUnit.SECONDS);
     }
 
-    public void logSend(int messageId) {
+    public void logBroadcast(int messageId) {
         logBuffer.add("b " + messageId);
         // actually write to file only after some events
         if (logBuffer.size() >= BUFFER_SIZE) {

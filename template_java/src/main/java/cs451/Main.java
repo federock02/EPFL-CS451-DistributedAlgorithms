@@ -96,18 +96,10 @@ public class Main {
 
                 // dividing number of messages to send and who to send them
                 String[] splits = line.split(" ");
-                if (splits.length != 2) {
+                if (splits.length != 1) {
                     System.err.println("Problem with the line " + lineNum + " in the configuration file!");
                 }
                 numMessages = Integer.parseInt(splits[0]);
-                receiverId = Integer.parseInt(splits[1]);
-                receiverHost = parser.hosts().get(receiverId - 1);
-
-                // receiver process does not send any message
-                if (receiverId == parser.myId() && receiverHost.getIp().equals(myHost.getIp())
-                        && receiverHost.getPort() == myHost.getPort()) {
-                    flagReceiver = true;
-                }
             }
         } catch (IOException e) {
             System.err.println("Problem with the configuration file!");
@@ -115,22 +107,16 @@ public class Main {
 
 
         System.out.println("Broadcasting and delivering messages...\n");
-        if (!flagReceiver) {
-            myHost.startSender(receiverHost);
 
-            // initialize all the message objects that need to be sent
-            // by initializing all the messages needed I can guarantee property PL3 - no creation
-            int myId = parser.myId();
-            for (int i = 1; i <= numMessages; i++) {
-                myHost.sendMessage(new Message(i, i, myId), receiverHost);
-                // System.out.println("Added new message for host " + myId);
-            }
-            System.out.println("Done");
+        myHost.startURBBroadcaster(parser.hosts());
+
+        // initialize all the message objects that need to be sent
+        int myId = parser.myId();
+        for (int i = 1; i <= numMessages; i++) {
+            myHost.broadcastMessage(new Message(i, i, myId));
+            // System.out.println("Added new message for host " + myId);
         }
-        else {
-            myHost.startReceiver();
-            myHost.receiveMessages();
-        }
+        System.out.println("Done");
 
 
         threadPool.shutdown();

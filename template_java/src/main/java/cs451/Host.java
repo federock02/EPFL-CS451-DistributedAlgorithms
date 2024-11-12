@@ -1,5 +1,6 @@
 package cs451;
 
+import cs451.FIFOURB.URB;
 import cs451.PerfectLink.PerfectLink;
 
 import java.io.*;
@@ -15,8 +16,7 @@ public class Host {
     private String ip;
     private int port = -1;
 
-    private Map<Integer, PerfectLink> p2pLinks = new HashMap();
-    private PerfectLink p2pReceiver;
+    private URB broadcaster;
 
     private static final String IP_START_REGEX = "/";
     private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
@@ -77,12 +77,7 @@ public class Host {
 
     public void stopProcessing() {
         flagStopProcessing = true;
-        for (PerfectLink perfectLink : p2pLinks.values()) {
-            perfectLink.stopProcessing();
-        }
-        if (p2pReceiver != null) {
-            p2pReceiver.stopProcessing();
-        }
+        broadcaster.stopProcessing();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -93,42 +88,20 @@ public class Host {
         logger = new Logger(outputPath);
     }
 
-    public void startSender(Host receiver) {
-        PerfectLink p2pLink = new PerfectLink(this);
-        p2pLinks.put(receiver.getId(), p2pLink);
-        p2pLink.startPerfectLinkSender(receiver, MAX_NUM_MESSAGES_PER_PACKAGE);
-    }
-
-    public void startReceiver() {
-        p2pReceiver = new PerfectLink(this);
-        p2pReceiver.startPerfectLinkReceiver();
+    public void startURBBroadcaster(List<Host> hosts) {
+        broadcaster = new URB(this);
+        broadcaster.startURBBroadcaster(hosts);
     }
 
     // -----------------------------------------------------------------------------------------------------------------
     // SENDING
     // -----------------------------------------------------------------------------------------------------------------
 
-    public void sendMessage(Message message, Host receiver) {
+    public void broadcastMessage(Message message) {
         if (!flagStopProcessing) {
-            p2pLinks.get(receiver.getId()).send(message);
-            logSend(message.getId());
+            broadcaster.urbBroadcast(message);
+            logBroadcast(message.getId());
         }
-    }
-
-    public void sendMessages(ConcurrentLinkedQueue<Message> messagesToSend, Host receiver) {
-        for (Message message : messagesToSend) {
-            sendMessage(message, receiver);
-        }
-    }
-
-    // -----------------------------------------------------------------------------------------------------------------
-    // RECEIVING
-    // -----------------------------------------------------------------------------------------------------------------
-
-    // logic for receiving messages, by listening for incoming messages on UDP socket
-    public void receiveMessages() {
-        // System.out.println("Receiver " + this.ip + " : " + this.port);
-        p2pReceiver.receiveMessages();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -139,12 +112,29 @@ public class Host {
         logger.logDeliver(senderId, messageId);
     }
 
-    private void logSend(int messageId) {
-        logger.logSend(messageId);
+    private void logBroadcast(int messageId) {
+        logger.logBroadcast(messageId);
     }
 
     public void flushLog() {
         logger.logWriteToFile();
         logger.closeWriter();
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // LOGGING
+    // -----------------------------------------------------------------------------------------------------------------
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Host host = (Host) o;
+        return id == host.id && port == host.port && Objects.equals(ip, host.ip);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, ip, port);
     }
 }
