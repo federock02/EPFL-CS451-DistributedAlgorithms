@@ -61,7 +61,7 @@ public class PerfectLink {
     // task for sending the package
     private ScheduledFuture<?> timeoutTask;
     // structure for messages that haven't been acknowledged yet
-    private final Map<Integer, Object[]> unacknowledgedMessages = new ConcurrentHashMap<>();
+    private final Map<Byte, Map<Integer, Object[]>> unacknowledgedMessages = new ConcurrentHashMap<>();
     // messages list pool (avoiding constant creation and destruction with garbage collector)
     private final Queue<Queue<Message>> listPool = new LinkedList<>();
 
@@ -74,7 +74,7 @@ public class PerfectLink {
     // pool for ByteBuffers to avoid frequent allocations when sending acks
     private final ArrayBlockingQueue<ByteBuffer> byteBufferPoolAcks = new ArrayBlockingQueue<>(10);
     // ack buffer size
-    private static final int ACK_BUFF_SIZE = 5;
+    private static final int ACK_BUFF_SIZE = 6;
     // pool of DatagramPackets for sending acks
     private final ArrayBlockingQueue<DatagramPacket> datagramPacketsPool = new ArrayBlockingQueue<>(10);
 
@@ -180,8 +180,8 @@ public class PerfectLink {
         }
     }
 
-    public byte getReceiverId() {
-        return receiverId;
+    public short getReceiverId() {
+        return (short) (receiverId + 1);
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -192,7 +192,10 @@ public class PerfectLink {
     public void send(Message message) {
         synchronized (queueLock) {
             messagePackage.add(message);
-            unacknowledgedMessages.put(message.getId(), new Object[]{message, receiverId, System.currentTimeMillis()});
+            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + (this.receiverId + 1));
+            Map<Integer, Object[]> unackedFromSender = unacknowledgedMessages.computeIfAbsent(message.getByteSenderId(),
+                    k -> new ConcurrentHashMap<>());
+            unackedFromSender.put(message.getId(), new Object[]{message, receiverId, System.currentTimeMillis()});
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
                 toSend.addAll(messagePackage);
@@ -210,7 +213,8 @@ public class PerfectLink {
                 }
             }
         }
-        while (unacknowledgedMessages.size() >= 500) {
+        // maybe not optimal
+        while (unacknowledgedMessages.get(message.getByteSenderId()).size() >= 100) {
             try {
                 sleep(20);
             } catch (InterruptedException e) {
@@ -312,11 +316,21 @@ public class PerfectLink {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                for (Integer messageId : unacknowledgedMessages.keySet()) {
-                    Object[] messagePack = unacknowledgedMessages.get(messageId);
-                    if (messagePack != null) {
-                        resend((Message) messagePack[0]);
-                        // System.out.println("Resending " + messageId);
+                System.out.println("In resending thread to " + (receiverId + 1));
+                for (Byte s : unacknowledgedMessages.keySet()) {
+                    System.out.println("Sender " + (s + 1));
+                    System.out.println("Messages");
+                    for (Integer m : unacknowledgedMessages.get(s).keySet()) {
+                        System.out.println(m);
+                    }
+                }
+                for (Byte senderId : unacknowledgedMessages.keySet()) {
+                    for (Integer messageId : unacknowledgedMessages.get(senderId).keySet()) {
+                        Object[] messagePack = unacknowledgedMessages.get(senderId).get(messageId);
+                        if (messagePack != null) {
+                            resend((Message) messagePack[0]);
+                            System.out.println("Resending " + messageId + " from " + (senderId + 1) + " to " + (receiverId + 1));
+                        }
                     }
                 }
             }
@@ -331,8 +345,8 @@ public class PerfectLink {
 
     // logic for receiving acknowledgments from receivers
     public void listenForAcks() {
-        DatagramPacket packet = new DatagramPacket(new byte[5], 5);
-        ByteBuffer byteBuffer = ByteBuffer.allocate(5);
+        DatagramPacket packet = new DatagramPacket(new byte[ACK_BUFF_SIZE], ACK_BUFF_SIZE);
+        ByteBuffer byteBuffer = ByteBuffer.allocate(ACK_BUFF_SIZE);
         new Thread(() -> {
             try {
                 while (true) {
@@ -353,6 +367,7 @@ public class PerfectLink {
                     byteBuffer.put(packet.getData());
                     byteBuffer.flip();
                     int messageId = byteBuffer.getInt();
+                    byte senderId = byteBuffer.get();
                     byte receiver = byteBuffer.get();
                     // System.out.println("Received ack for " + messageId);
 
@@ -361,17 +376,28 @@ public class PerfectLink {
                         continue;
                     }
 
-                    long currentTime = System.currentTimeMillis();
-                    if (unacknowledgedMessages.containsKey(messageId)) {
-                        // System.out.println("Received ack for " + messageId);
-                        Object[] messagePack = unacknowledgedMessages.get(messageId);
-                        unacknowledgedMessages.remove(messageId);
-                        long sendTime = (long) messagePack[2];
-                        long sampleRTT = currentTime - sendTime;
+                    System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + packet.getPort());
+                    for (Byte s : unacknowledgedMessages.keySet()) {
+                        System.out.println("Sender " + (s + 1));
+                        System.out.println("Messages");
+                        for (Integer m : unacknowledgedMessages.get(s).keySet()) {
+                            System.out.println(m);
+                        }
+                    }
 
-                        // update estimated RTT and deviation
-                        this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
-                        this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
+                    long currentTime = System.currentTimeMillis();
+                    if (unacknowledgedMessages.containsKey(senderId)) {
+                        // System.out.println("Received ack for " + messageId);
+                        if (unacknowledgedMessages.get(senderId).containsKey(messageId)) {
+                            Object[] messagePack = unacknowledgedMessages.get(senderId).get(messageId);
+                            unacknowledgedMessages.get(senderId).remove(messageId);
+                            long sendTime = (long) messagePack[2];
+                            long sampleRTT = currentTime - sendTime;
+
+                            // update estimated RTT and deviation
+                            this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
+                            this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -454,7 +480,7 @@ public class PerfectLink {
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
 
-            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1));
+            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
             LinkedList<int[]> deliveredMessages;
@@ -465,6 +491,9 @@ public class PerfectLink {
                     if (i != -1) {
                         // message wasn't already delivered
                         broadcaster.plDeliver(message);
+                    }
+                    else {
+                        System.out.println("Already PLDelivered");
                     }
                 } else {
                     // never received from sender, add to delivered and add sender
@@ -478,17 +507,17 @@ public class PerfectLink {
                 }
             }
 
-            threadPool.submit(() -> sendAck(messageId, senderAddress, senderPort));
-            // sendAck(messageId, senderAddress, senderPort);
+            // threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
+            sendAck(messageId, senderId, senderAddress, senderPort);
         }
     }
 
     // sending ack for received message
-    private void sendAck(int messageId, InetAddress senderAddress, int senderPort) {
+    private void sendAck(int messageId, byte senderId, InetAddress senderAddress, int senderPort) {
         ByteBuffer byteBuffer = byteBufferPoolAcks.poll();
         if (byteBuffer == null) {
             // if the pool is empty, allocate a new one
-            byteBuffer = ByteBuffer.allocate(5);
+            byteBuffer = ByteBuffer.allocate(ACK_BUFF_SIZE);
         } else {
             // clear the buffer before reuse
             byteBuffer.clear();
@@ -496,6 +525,7 @@ public class PerfectLink {
 
         // convert messageId and myId to bytes
         byteBuffer.putInt(messageId);
+        byteBuffer.put(senderId);
         byteBuffer.put(this.myId);
 
         byte[] byteAckData = byteBuffer.array();
@@ -508,7 +538,7 @@ public class PerfectLink {
             ackPacket.setData(byteAckData);
             ackPacket.setAddress(senderAddress);
             ackPacket.setPort(senderPort);
-            // System.out.println("Acking " + messageId + " to " + senderAddress + ":" + senderPort);
+            System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
         if (!flagStopProcessing) {

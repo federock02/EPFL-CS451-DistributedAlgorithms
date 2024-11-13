@@ -82,9 +82,17 @@ public class URB {
 
     // URB broadcast primitive
     public void urbBroadcast(Message message) {
-        Map<Integer, Object[]> map = new HashMap<>();
+        Map<Integer, Object[]> map = pending.computeIfAbsent((short) message.getSenderId(), k -> new HashMap<>());
         map.put(message.getId(), new Object[]{message, (short) 0});
-        pending.put((short) message.getSenderId(), map);
+        for (Short key : pending.keySet()) {
+            System.out.println("Pending: " + key);
+        }
+        Map<Integer, Object[]> pendMap = pending.get((short) (myId + 1));
+        if (pendMap != null) {
+            for (Integer key : pendMap.keySet()) {
+                System.out.println("PendMap: " + key);
+            }
+        }
         bebBroadcast(message);
     }
 
@@ -100,10 +108,9 @@ public class URB {
     private void bebBroadcast(Message message, short senderId) {
         System.out.println("bebBroadcastSender " + message.getId() + " from " + senderId);
         for (PerfectLink sender : correctHosts) {
-            if ((short) sender.getReceiverId() != senderId) {
-                sender.send(message);
-                // System.out.println("Sending message " + message.getId() + " sender " + message.getSenderId() + " to " + sender.getReceiverId());
-            }
+            System.out.println("to " + sender.getReceiverId());
+            sender.send(message);
+            // System.out.println("Sending message " + message.getId() + " sender " + message.getSenderId() + " to " + sender.getReceiverId());
         }
     }
 
@@ -114,9 +121,22 @@ public class URB {
     public void plDeliver(Message message) {
         int messageId = message.getId();
         short senderId = (short) message.getSenderId();
-        System.out.println("plDeliver " + messageId + " - " + senderId);
-        Map<Integer, Object[]> pendMap = pending.computeIfAbsent(senderId, k -> new HashMap<>());
+        System.out.println("plDeliver " + messageId + " from " + senderId);
+        for (Short key : pending.keySet()) {
+            System.out.println("Pending: " + key);
+        }
+        Map<Integer, Object[]> pendMap = pending.get(senderId);
+        if (pendMap != null) {
+            for (Integer key : pendMap.keySet()) {
+                System.out.println("PendMap: " + key);
+            }
+        }
+        if (pendMap == null) {
+            pendMap = new HashMap<>();
+            pending.put(senderId, pendMap);
+        }
         Object[] pend = pendMap.get(messageId);
+        System.out.println("Pend null? " + (pend==null));
         if (pend == null) {
             // check if it wasn't already urb-delivered
             // check here so that I can remove the pending message once I deliver it
