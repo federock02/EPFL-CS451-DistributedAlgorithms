@@ -15,25 +15,22 @@ import java.util.concurrent.ConcurrentMap;
 public class URB {
     // host parameters
     private final byte myId;
-    private final String myIp;
-    private final int myPort;
     private final Host myHost;
+
+    private List<Host> otherHosts;
 
     // number of original processes (up to 128, 1 byte)
     private short N = 0;
 
-    // correct hosts list
-    // private ConcurrentMap<Byte, Object[]> correctHosts;
-    private ConcurrentLinkedQueue<PerfectLink> correctHosts;
-
     // my perfect link receiver
     private PerfectLink myPerfectLinkReceiver;
 
+    // my perfect link sender
+    private PerfectLink myPerfectLinkSender;
+
     // pending list
-    // keep messageId as key and message object and number of acks received for it as values
-    // don't need the actual hosts and hostsIds that sent the ack since perfect links can only deliver once
-    // private ConcurrentHashMap<Object[], Object[]> pending;
-    private ConcurrentHashMap<Short, Map<Integer, Object[]>> pending;
+    // encoding of senderId and messageId as key and message as value
+    private ConcurrentHashMap<Long, Object[]> pending;
 
     // delivered map
     // keep one delivered list for each host
@@ -42,38 +39,30 @@ public class URB {
     // create an URB host with the attribute from the host above
     public URB(Host myHost) {
         this.myId = (byte) (myHost.getId() - 1);
-        this.myIp = myHost.getIp();
-        this.myPort = myHost.getPort();
         this.myHost = myHost;
     }
 
     // initialize the URB host with the info of all correct processes to which it will broadcast
     public void startURBBroadcaster(List<Host> otherHosts) {
-        this.correctHosts = new ConcurrentLinkedQueue<>();
         myPerfectLinkReceiver = new PerfectLink(myHost, this);
         myPerfectLinkReceiver.startPerfectLinkReceiver();
         myPerfectLinkReceiver.receiveMessages();
 
-        for (Host host : otherHosts) {
-            if (!host.equals(myHost)) {
-                PerfectLink perfectLinkSender = new PerfectLink(myHost, this);
-                perfectLinkSender.startPerfectLinkSender(host);
-                correctHosts.add(perfectLinkSender);
-            }
-            N += 1;
-        }
+        this.otherHosts = otherHosts;
+
+        myPerfectLinkSender = new PerfectLink(myHost, this);
+        myPerfectLinkSender.startPerfectLinkSender();
+
         // calculate half of initial processes, rounding up
-        N = (short) (N/2);
-        System.out.println("N = " + N);
+        N = (short) (otherHosts.size()/2);
+        // System.out.println("N = " + N);
 
         pending = new ConcurrentHashMap<>();
     }
 
     public void stopProcessing() {
         myPerfectLinkReceiver.stopProcessing();
-        for (PerfectLink sender : correctHosts) {
-            sender.stopProcessing();
-        }
+        myPerfectLinkSender.stopProcessing();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -82,35 +71,25 @@ public class URB {
 
     // URB broadcast primitive
     public void urbBroadcast(Message message) {
-        Map<Integer, Object[]> map = pending.computeIfAbsent((short) message.getSenderId(), k -> new HashMap<>());
-        map.put(message.getId(), new Object[]{message, (short) 0});
-        for (Short key : pending.keySet()) {
-            System.out.println("Pending: " + key);
+        long key = encodeMessageKey(message.getId(), message.getByteSenderId());
+        // add to pending, with 0 acks
+        pending.put(key, new Object[]{message, (short) 0});
+
+        /*
+        for (Long k : pending.keySet()) {
+            System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
         }
-        Map<Integer, Object[]> pendMap = pending.get((short) (myId + 1));
-        if (pendMap != null) {
-            for (Integer key : pendMap.keySet()) {
-                System.out.println("PendMap: " + key);
-            }
-        }
+        */
         bebBroadcast(message);
     }
 
     private void bebBroadcast(Message message) {
-        System.out.println("bebBroadcast " + message.getId());
-        for (PerfectLink sender : correctHosts) {
-
-            sender.send(message);
-            // System.out.println("Sending message " + message.getId() + " sender " + message.getSenderId() + " to " + sender.getReceiverId());
-        }
-    }
-
-    private void bebBroadcast(Message message, short senderId) {
-        System.out.println("bebBroadcastSender " + message.getId() + " from " + senderId);
-        for (PerfectLink sender : correctHosts) {
-            System.out.println("to " + sender.getReceiverId());
-            sender.send(message);
-            // System.out.println("Sending message " + message.getId() + " sender " + message.getSenderId() + " to " + sender.getReceiverId());
+        // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
+        for (Host host : otherHosts) {
+            if (host != this.myHost) {
+                // System.out.println("to " + host.getId());
+                myPerfectLinkSender.send(message, host);
+            }
         }
     }
 
@@ -120,83 +99,79 @@ public class URB {
 
     public void plDeliver(Message message) {
         int messageId = message.getId();
-        short senderId = (short) message.getSenderId();
-        System.out.println("plDeliver " + messageId + " from " + senderId);
-        for (Short key : pending.keySet()) {
-            System.out.println("Pending: " + key);
-        }
-        Map<Integer, Object[]> pendMap = pending.get(senderId);
-        if (pendMap != null) {
-            for (Integer key : pendMap.keySet()) {
-                System.out.println("PendMap: " + key);
-            }
-        }
-        if (pendMap == null) {
-            pendMap = new HashMap<>();
-            pending.put(senderId, pendMap);
-        }
-        Object[] pend = pendMap.get(messageId);
-        System.out.println("Pend null? " + (pend==null));
+        byte senderId = message.getByteSenderId();
+        long key = encodeMessageKey(messageId, senderId);
+
+        // System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
+
+        Object[] pend = pending.get(key);
+        // System.out.println("Pend null? " + (pend==null));
+
         if (pend == null) {
+            // message from sender is not yet in pending, need to add it
             // check if it wasn't already urb-delivered
             // check here so that I can remove the pending message once I deliver it
             LinkedList<int[]> deliveredMessages;
             synchronized (deliveredMap) {
-                deliveredMessages = deliveredMap.get((byte) (senderId - 1));
+                deliveredMessages = deliveredMap.get(senderId);
                 if (deliveredMessages != null) {
+                    // previously received messages from the senderId
                     if (!checkIfDelivered(deliveredMessages, messageId)) {
-                        System.out.println("Not delivered");
+                        // System.out.println("Not delivered");
                         // message wasn't already delivered
+                        // add to pending with ack = 1
                         pend = new Object[]{message, (short) 1};
-                        pendMap.put(messageId, pend);
-                        bebBroadcast(message, senderId);
-                    }
-                    else {
-                        System.out.println("Delivered");
+                        pending.put(key, pend);
+                        bebBroadcast(message);
                     }
                 }
                 else {
-                    System.out.println("Not delivered");
-                    // message wasn't already delivered
+                    // never received any message from the same sender previously
+                    // so message was not delivered
+                    // System.out.println("Not delivered");
                     pend = new Object[]{message, (short) 1};
-                    pendMap.put(messageId, pend);
-                    bebBroadcast(message, senderId);
+                    pending.put(key, pend);
+                    bebBroadcast(message);
                 }
-
             }
         }
         else {
-            System.out.println("+1");
+            // message is already in pending
+            // System.out.println("+1 ack");
             pend[1] = (short) ((short) pend[1] + 1);
-            System.out.println(pend[1]);
+            // System.out.println("Acks: " + pend[1]);
         }
 
         if (pend != null && (short) pend[1] >= N) {
             // urb-deliver when majority ack, majority is >= than half because sender can count itself
             urbDeliver(message, messageId, senderId);
             // can remove from pending because it checks if message was already delivered when it gets one
-            pendMap.remove(messageId);
+            pending.remove(key);
         }
     }
 
-    private void urbDeliver(Message message, int messageId, short senderId) {
-        System.out.println("urbDeliver " + messageId + " - " + senderId);
+    private void urbDeliver(Message message, int messageId, byte senderId) {
+        // System.out.println("urbDeliver " + messageId + " - " + (senderId + 1));
         LinkedList<int[]> deliveredMessages;
         // add to delivered map
         synchronized (deliveredMap) {
-            deliveredMessages = deliveredMap.get((byte) (senderId - 1));
+            deliveredMessages = deliveredMap.get(senderId);
             if (deliveredMessages == null) {
                 deliveredMessages = new LinkedList<>();
                 deliveredMessages.add(new int[]{messageId, messageId});
-                deliveredMap.put((byte) (senderId - 1), deliveredMessages);
+                deliveredMap.put(senderId, deliveredMessages);
             }
             else {
                 addMessage(deliveredMessages, messageId);
             }
         }
         // deliver
-        myHost.logDeliver((byte) (senderId - 1), messageId);
+        myHost.logDeliver(senderId, messageId);
     }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // UTILS
+    // -----------------------------------------------------------------------------------------------------------------
 
     private boolean checkIfDelivered(LinkedList<int[]> deliveredMessages, int messageId) {
         int start = 0;
@@ -278,5 +253,20 @@ public class URB {
         }
         // message not found and cannot extend any range, just add it
         deliveredMessages.add(middle, new int[] {messageId, messageId});
+    }
+
+    public static long encodeMessageKey(int messageId, int senderId) {
+        // shift the senderId to the upper bits and combine with messageId
+        return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
+    }
+
+    public static int getSenderId(long key) {
+        // extract the upper 7 bits
+        return (int) (key >>> 31);
+    }
+
+    public static int getMessageId(long key) {
+        // extract the lower 31 bits
+        return (int) (key & 0x7FFFFFFF);
     }
 }

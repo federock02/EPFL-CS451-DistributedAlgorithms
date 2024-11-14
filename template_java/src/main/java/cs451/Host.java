@@ -63,6 +63,10 @@ public class Host {
         return id;
     }
 
+    public byte getByteId() {
+        return (byte) (id - 1);
+    }
+
     public String getIp() {
         return ip;
     }
