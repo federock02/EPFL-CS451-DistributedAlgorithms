@@ -1,5 +1,6 @@
 package cs451.FIFOURB;
 
+import com.sun.source.tree.Tree;
 import cs451.Host;
 import cs451.Message;
 import cs451.PerfectLink.PerfectLink;
@@ -24,14 +25,19 @@ public class URB {
 
     // pending list
     // encoding of senderId and messageId as key and message as value
-    private ConcurrentHashMap<Long, Object[]> pending;
+    private TreeMap<Long, Object[]> pending;
 
     // delivered map
-    // keep one delivered list for each host
-    private final Map<Byte, LinkedList<int[]>> deliveredMap = new ConcurrentHashMap<>();
+    // keep the last delivered for each sender
+    private final Map<Byte, Integer> deliveredMap = new ConcurrentHashMap<>();
+
+    // lock for delivery
+    private final Object deliveryLock = new Object();
 
     // thread for broadcasting
     private BebBroadcastThread broadcastThread;
+
+    private boolean flagStopProcessing = false;
 
     // create an URB host with the attribute from the host above
     public URB(Host myHost) {
@@ -53,7 +59,7 @@ public class URB {
         N = (short) (otherHosts.size()/2);
         // System.out.println("N = " + N);
 
-        pending = new ConcurrentHashMap<>();
+        pending = new TreeMap<>();
 
         // thread for broadcasting
         broadcastThread = new BebBroadcastThread(myHost, otherHosts);
@@ -61,6 +67,8 @@ public class URB {
     }
 
     public void stopProcessing() {
+        flagStopProcessing = true;
+        broadcastThread.terminate();
         myPerfectLinkReceiver.stopProcessing();
         myPerfectLinkSender.stopProcessing();
     }
@@ -71,27 +79,32 @@ public class URB {
 
     // URB broadcast primitive
     public void urbBroadcast(Message message) {
-        long key = encodeMessageKey(message.getId(), message.getByteSenderId());
-        // add to pending, with 0 acks
-        pending.put(key, new Object[]{message, (short) 0});
+        if (!flagStopProcessing) {
+            long key = encodeMessageKey(message.getId(), message.getByteSenderId());
+            // add to pending, with 0 acks
+            pending.put(key, new Object[]{message, (short) 0});
 
-        /*
-        for (Long k : pending.keySet()) {
-            System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
+            /*
+            for (Long k : pending.keySet()) {
+                System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
+            }
+            */
+            bebBroadcast(message);
         }
-        */
-        bebBroadcast(message);
     }
 
     private void bebBroadcast(Message message) {
-        // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
-        broadcastThread.enqueueMessage(message);
+        if (!flagStopProcessing) {
+            // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
+            broadcastThread.enqueueMessage(message);
+        }
     }
 
     class BebBroadcastThread extends Thread {
-        private Queue<Message> messageQueue;
-        private List<Host> receivers;
-        private Host sender;
+        private final Queue<Message> messageQueue;
+        private final List<Host> receivers;
+        private final Host sender;
+        private boolean exit = false;
 
         public BebBroadcastThread(Host sender, List<Host> receivers) {
             this.sender = sender;
@@ -106,17 +119,21 @@ public class URB {
         @Override
         public void run() {
             Message message;
-            while (true) {
+            while (!exit) {
                 message = messageQueue.poll();
                 if (message != null) {
                     for (Host host : receivers) {
-                        if (host != this.sender) {
+                        if (!flagStopProcessing && host != this.sender) {
                             // System.out.println("to " + host.getId());
                             myPerfectLinkSender.send(message, host);
                         }
                     }
                 }
             }
+        }
+
+        public void terminate() {
+            exit = true;
         }
     }
 
@@ -130,158 +147,77 @@ public class URB {
         long key = encodeMessageKey(messageId, senderId);
 
         // System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
+        synchronized (deliveryLock) {
+            Object[] pend = pending.get(key);
+            // System.out.println("Pend null? " + (pend==null));
 
-        Object[] pend = pending.get(key);
-        // System.out.println("Pend null? " + (pend==null));
+            if (pend == null) {
+                // message from sender is not yet in pending, need to add it
+                LinkedList<int[]> deliveredMessages;
+                Integer deliveredLast;
+                boolean delivered = false;
 
-        if (pend == null) {
-            // message from sender is not yet in pending, need to add it
-            // check if it wasn't already urb-delivered
-            // check here so that I can remove the pending message once I deliver it
-            LinkedList<int[]> deliveredMessages;
-            synchronized (deliveredMap) {
-                deliveredMessages = deliveredMap.get(senderId);
-                if (deliveredMessages != null) {
-                    // previously received messages from the senderId
-                    if (!checkIfDelivered(deliveredMessages, messageId)) {
-                        // System.out.println("Not delivered");
-                        // message wasn't already delivered
-                        // add to pending with ack = 1
-                        pend = new Object[]{message, (short) 1};
-                        pending.put(key, pend);
-                        bebBroadcast(message);
-                    }
+                // check if the message has already been FIFO delivered
+                deliveredLast = deliveredMap.get(senderId);
+                if (deliveredLast != null && deliveredLast >= messageId) {
+                    delivered = true;
                 }
-                else {
-                    // never received any message from the same sender previously
-                    // so message was not delivered
-                    // System.out.println("Not delivered");
+
+                // if it wasn't FIFO delivered, check if it was already pending for delivery
+                if (!delivered) {
+                    // the message is not yet FIFO delivered, and it was not in pending, so add it
                     pend = new Object[]{message, (short) 1};
                     pending.put(key, pend);
                     bebBroadcast(message);
                 }
+            } else {
+                // message is already in pending
+                // System.out.println("+1 ack");
+                pend[1] = (short) ((short) pend[1] + 1);
+                // System.out.println("Acks: " + pend[1]);
             }
-        }
-        else {
-            // message is already in pending
-            // System.out.println("+1 ack");
-            pend[1] = (short) ((short) pend[1] + 1);
-            // System.out.println("Acks: " + pend[1]);
-        }
 
-        if (pend != null && (short) pend[1] >= N) {
-            // urb-deliver when majority ack, majority is >= than half because sender can count itself
-            urbDeliver(message, messageId, senderId);
-            // can remove from pending because it checks if message was already delivered when it gets one
-            pending.remove(key);
+            // check if the message has majority ack
+            if (pend != null && (short) pend[1] >= N) {
+                Integer deliveredLast = deliveredMap.get(senderId);
+                // check if the message is the next in line
+                if (deliveredLast == null || messageId == deliveredLast + 1) {
+                    // if it is, FIFO deliver it
+                    fifoDeliver(messageId, senderId);
+                }
+                // can remove from pending because it checks if message was already delivered when it gets one
+                pending.remove(key);
+            }
         }
     }
 
-    private void urbDeliver(Message message, int messageId, byte senderId) {
-        // System.out.println("urbDeliver " + messageId + " - " + (senderId + 1));
-        LinkedList<int[]> deliveredMessages;
-        // add to delivered map
-        synchronized (deliveredMap) {
-            deliveredMessages = deliveredMap.get(senderId);
-            if (deliveredMessages == null) {
-                deliveredMessages = new LinkedList<>();
-                deliveredMessages.add(new int[]{messageId, messageId});
-                deliveredMap.put(senderId, deliveredMessages);
-            }
-            else {
-                addMessage(deliveredMessages, messageId);
-            }
-        }
-        // deliver
+    private void fifoDeliver(int messageId, byte senderId) {
+        // edit the last delivered
         myHost.logDeliver(senderId, messageId);
+
+        // check if the first pending for delivery are next in line
+
+        int nextMessage = messageId + 1;
+        Long key = encodeMessageKey(nextMessage, senderId);
+        Object[] pend;
+        // check if the next message is in pending and has majority ack
+        while ((pend = pending.get(key)) != null && (short) pend[1] >= N) {
+            myHost.logDeliver(senderId, nextMessage);
+            // remove from pending when delivered
+            pending.remove(key);
+            // increment next message
+            nextMessage++;
+            key = encodeMessageKey(senderId, nextMessage);
+        }
+
+        // add the last FIFO delivered message to the map for the sender
+        // -1 because I increment and then check if it exists, and have to go back if it doesn't
+        deliveredMap.put(senderId, (nextMessage - 1));
     }
 
     // -----------------------------------------------------------------------------------------------------------------
     // UTILS
     // -----------------------------------------------------------------------------------------------------------------
-
-    private boolean checkIfDelivered(LinkedList<int[]> deliveredMessages, int messageId) {
-        int start = 0;
-        int end = deliveredMessages.size() - 1;
-        int middle;
-
-        // binary search to find if a message has been delivered in the compressed structure
-        while (start <= end) {
-            middle = (start + end) / 2;
-
-            int[] range = deliveredMessages.get(middle);
-            if (range[0] <= messageId && messageId <= range[1]) {
-                // message is in one of the delivered ranges
-                return true;
-            }
-            else if (range[0] > messageId) {
-                // lower bound of range is higher than message id
-                end = middle - 1;
-            }
-            else {
-                // upper bound of range is lower than message id
-                start = middle + 1;
-            }
-        }
-        // message not found
-        return false;
-    }
-
-    private void addMessage(LinkedList<int[]> deliveredMessages, int messageId) {
-        int start = 0;
-        int end = deliveredMessages.size() - 1;
-        int middle = 0;
-
-        // binary search to find if a message has been delivered in the compressed structure
-        while (start <= end) {
-            middle = (start + end) / 2;
-
-            int[] range = deliveredMessages.get(middle);
-            if (range[0] <= messageId && messageId <= range[1]) {
-                // message is in one of the delivered ranges
-                return;
-            }
-            else if (range[0] > messageId) {
-                // lower bound of range is higher than message id
-                if (range[0] == messageId + 1) {
-                    // message id can extend the range by 1 on the left
-                    range[0] = messageId;
-                    if (middle > 0) {
-                        // getting previous range to check if the two adjacent ranges can be compressed
-                        int[] range2 = deliveredMessages.get(middle - 1);
-                        if (range2[1] == range[0] - 1) {
-                            range2[1] = range[1];
-                            deliveredMessages.remove(middle);
-                            middle = middle - 1;
-                        }
-                    }
-                    return;
-                }
-                end = middle - 1;
-            }
-            else {
-                // upper bound of range is lower than message id
-                if (range[1] == messageId - 1) {
-                    // message id can extend the range by 1 on the right
-                    range[1] = messageId;
-                    if (middle < (deliveredMessages.size() - 1)) {
-                        // getting following range to check if the two adjacent ranges can be compressed
-                        int[] range2 = deliveredMessages.get(middle + 1);
-                        if (range2[0] == range[1] + 1) {
-                            range2[0] = range[0];
-                            deliveredMessages.remove(middle);
-                        }
-                    }
-                    return;
-                }
-                middle += 1;
-                start = middle;
-            }
-        }
-        // message not found and cannot extend any range, just add it
-        deliveredMessages.add(middle, new int[] {messageId, messageId});
-    }
-
     public static long encodeMessageKey(int messageId, int senderId) {
         // shift the senderId to the upper bits and combine with messageId
         return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
