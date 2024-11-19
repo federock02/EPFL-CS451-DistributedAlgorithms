@@ -4,17 +4,11 @@ import cs451.Host;
 import cs451.Message;
 import cs451.PerfectLink.PerfectLink;
 
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ConcurrentMap;
+import java.util.*;
+import java.util.concurrent.*;
 
 public class URB {
     // host parameters
-    private final byte myId;
     private final Host myHost;
 
     private List<Host> otherHosts;
@@ -36,9 +30,11 @@ public class URB {
     // keep one delivered list for each host
     private final Map<Byte, LinkedList<int[]>> deliveredMap = new ConcurrentHashMap<>();
 
+    // thread for broadcasting
+    private BebBroadcastThread broadcastThread;
+
     // create an URB host with the attribute from the host above
     public URB(Host myHost) {
-        this.myId = (byte) (myHost.getId() - 1);
         this.myHost = myHost;
     }
 
@@ -58,6 +54,10 @@ public class URB {
         // System.out.println("N = " + N);
 
         pending = new ConcurrentHashMap<>();
+
+        // thread for broadcasting
+        broadcastThread = new BebBroadcastThread(myHost, otherHosts);
+        broadcastThread.start();
     }
 
     public void stopProcessing() {
@@ -85,10 +85,37 @@ public class URB {
 
     private void bebBroadcast(Message message) {
         // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
-        for (Host host : otherHosts) {
-            if (host != this.myHost) {
-                // System.out.println("to " + host.getId());
-                myPerfectLinkSender.send(message, host);
+        broadcastThread.enqueueMessage(message);
+    }
+
+    class BebBroadcastThread extends Thread {
+        private Queue<Message> messageQueue;
+        private List<Host> receivers;
+        private Host sender;
+
+        public BebBroadcastThread(Host sender, List<Host> receivers) {
+            this.sender = sender;
+            this.receivers = receivers;
+            messageQueue = new ConcurrentLinkedQueue<>();
+        }
+
+        public void enqueueMessage(Message message) {
+            messageQueue.add(message);
+        }
+
+        @Override
+        public void run() {
+            Message message;
+            while (true) {
+                message = messageQueue.poll();
+                if (message != null) {
+                    for (Host host : receivers) {
+                        if (host != this.sender) {
+                            // System.out.println("to " + host.getId());
+                            myPerfectLinkSender.send(message, host);
+                        }
+                    }
+                }
             }
         }
     }

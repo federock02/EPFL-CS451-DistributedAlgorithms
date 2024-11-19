@@ -214,7 +214,6 @@ public class PerfectLink {
             }
         }
         // if the host has too many unacknowledged messages, wait a bit
-        /*
         while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
             try {
                 sleep(20);
@@ -222,7 +221,6 @@ public class PerfectLink {
                 throw new RuntimeException(e);
             }
         }
-        */
     }
 
     // resend primitive, implements the same logic as sending
