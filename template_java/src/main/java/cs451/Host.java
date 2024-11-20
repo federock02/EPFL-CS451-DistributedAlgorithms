@@ -103,7 +103,13 @@ public class Host {
 
     public void broadcastMessage(Message message) {
         if (!flagStopProcessing) {
-            broadcaster.urbBroadcast(message);
+            while (!broadcaster.urbBroadcast(message)) {
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             logBroadcast(message.getId());
         }
     }
