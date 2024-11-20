@@ -162,7 +162,7 @@ public class URB {
         byte senderId = message.getByteSenderId();
         long key = encodeMessageKey(messageId, senderId);
 
-        // System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
+        System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
         synchronized (deliveryLock) {
             Object[] pend = pending.get(key);
             // System.out.println("Pend null? " + (pend==null));
