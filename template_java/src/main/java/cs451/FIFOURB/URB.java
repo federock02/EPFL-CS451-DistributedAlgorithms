@@ -91,7 +91,7 @@ public class URB {
                 System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
             }
             */
-            bebBroadcast(message);
+            bebBroadcastNew(message);
             return true;
         }
         else {
@@ -99,15 +99,21 @@ public class URB {
         }
     }
 
-    private void bebBroadcast(Message message) {
+    private void bebBroadcastNew(Message message) {
         if (!flagStopProcessing) {
             // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
             broadcastThread.enqueueMessage(message);
         }
     }
 
+    private void bebBroadcastForward(Message message) {
+        if (!flagStopProcessing) {
+            broadcastThread.stackMessage(message);
+        }
+    }
+
     class BebBroadcastThread extends Thread {
-        private final Queue<Message> messageQueue;
+        private final ConcurrentLinkedDeque<Message> messageQueue;
         private final List<Host> receivers;
         private final Host sender;
         private boolean exit = false;
@@ -115,18 +121,22 @@ public class URB {
         public BebBroadcastThread(Host sender, List<Host> receivers) {
             this.sender = sender;
             this.receivers = receivers;
-            messageQueue = new ConcurrentLinkedQueue<>();
+            messageQueue = new ConcurrentLinkedDeque<>();
         }
 
         public void enqueueMessage(Message message) {
-            messageQueue.add(message);
+            messageQueue.addLast(message);
+        }
+
+        public void stackMessage(Message message) {
+            messageQueue.addFirst(message);
         }
 
         @Override
         public void run() {
             Message message;
             while (!exit) {
-                message = messageQueue.poll();
+                message = messageQueue.pollFirst();
                 if (message != null) {
                     for (Host host : receivers) {
                         if (!flagStopProcessing && host != this.sender) {
@@ -174,7 +184,7 @@ public class URB {
                     // the message is not yet FIFO delivered, and it was not in pending, so add it
                     pend = new Object[]{message, (short) 1};
                     pending.put(key, pend);
-                    bebBroadcast(message);
+                    bebBroadcastForward(message);
                 }
             } else {
                 // message is already in pending
