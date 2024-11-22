@@ -37,9 +37,12 @@ public class URB {
     // thread for broadcasting
     private BebBroadcastThread broadcastThread;
 
+    // thread for delivery from pl
+    private PlDeliveryThread plDeliveryThread;
+
     private boolean flagStopProcessing = false;
 
-    private static final int MAX_PENDING_MESSAGES = 10;
+    private static final int MAX_PENDING_MESSAGES = 16;
 
     // create an URB host with the attribute from the host above
     public URB(Host myHost) {
@@ -66,11 +69,16 @@ public class URB {
         // thread for broadcasting
         broadcastThread = new BebBroadcastThread(myHost, otherHosts);
         broadcastThread.start();
+
+        // thread for pl delivery
+        plDeliveryThread = new PlDeliveryThread();
+        plDeliveryThread.start();
     }
 
     public void stopProcessing() {
         flagStopProcessing = true;
-        broadcastThread.terminate();
+        broadcastThread.interrupt();
+        plDeliveryThread.interrupt();
         myPerfectLinkReceiver.stopProcessing();
         myPerfectLinkSender.stopProcessing();
     }
@@ -102,44 +110,58 @@ public class URB {
     private void bebBroadcastNew(Message message) {
         if (!flagStopProcessing) {
             // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
-            broadcastThread.enqueueMessage(message);
+            broadcastThread.enqueueNewMessage(message);
         }
     }
 
     private void bebBroadcastForward(Message message) {
         if (!flagStopProcessing) {
-            broadcastThread.stackMessage(message);
+            broadcastThread.enqueueRelayMessage(message);
         }
     }
 
     class BebBroadcastThread extends Thread {
-        private final ConcurrentLinkedDeque<Message> messageQueue;
+        private final ConcurrentLinkedQueue<Message> messageQueue;
+        private final ConcurrentLinkedQueue<Message> relayMessageQueue;
         private final List<Host> receivers;
         private final Host sender;
-        private boolean exit = false;
 
         public BebBroadcastThread(Host sender, List<Host> receivers) {
             this.sender = sender;
             this.receivers = receivers;
-            messageQueue = new ConcurrentLinkedDeque<>();
+            messageQueue = new ConcurrentLinkedQueue<>();
+            relayMessageQueue = new ConcurrentLinkedQueue<>();
         }
 
-        public void enqueueMessage(Message message) {
-            messageQueue.addLast(message);
+        public void enqueueNewMessage(Message message) {
+            messageQueue.add(message);
         }
 
-        public void stackMessage(Message message) {
-            messageQueue.addFirst(message);
+        public void enqueueRelayMessage(Message message) {
+            relayMessageQueue.add(message);
         }
 
         @Override
         public void run() {
             Message message;
-            while (!exit) {
-                message = messageQueue.pollFirst();
+            while (true) {
+                // prefers the messages that need to be relayed
+                message = relayMessageQueue.poll();
+
+                if (message == null) {
+                    // if no message to relay, send a new one
+                    message = messageQueue.poll();
+                    if (message != null) {
+                        System.out.println("Broadcasting my message");
+                    }
+                }
+                else {
+                    System.out.println("Relaying message");
+                }
+
                 if (message != null) {
                     for (Host host : receivers) {
-                        if (!flagStopProcessing && host != this.sender) {
+                        if (!flagStopProcessing && !host.equals(sender)) {
                             // System.out.println("to " + host.getId());
                             myPerfectLinkSender.send(message, host);
                         }
@@ -147,83 +169,111 @@ public class URB {
                 }
             }
         }
-
-        public void terminate() {
-            exit = true;
-        }
     }
 
     // -----------------------------------------------------------------------------------------------------------------
     // DELIVERING
     // -----------------------------------------------------------------------------------------------------------------
 
-    public void plDeliver(Message message) {
-        int messageId = message.getId();
-        byte senderId = message.getByteSenderId();
-        long key = encodeMessageKey(messageId, senderId);
+    class PlDeliveryThread extends Thread {
+        private final Queue<Message> deliveryQueue;
 
-        System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
-        synchronized (deliveryLock) {
-            Object[] pend = pending.get(key);
-            // System.out.println("Pend null? " + (pend==null));
+        int messageId;
+        byte senderId;
+        long key;
 
-            if (pend == null) {
-                // message from sender is not yet in pending, need to add it
-                LinkedList<int[]> deliveredMessages;
-                Integer deliveredLast;
-                boolean delivered = false;
+        public PlDeliveryThread() {
+            deliveryQueue = new ConcurrentLinkedQueue<>();
+        }
 
-                // check if the message has already been FIFO delivered
-                deliveredLast = deliveredMap.get(senderId);
-                if (deliveredLast != null && deliveredLast >= messageId) {
-                    delivered = true;
+        public void plDeliver(Message message) {
+            deliveryQueue.add(message);
+        }
+
+        @Override
+        public void run() {
+            Message message;
+            while (true) {
+                message = deliveryQueue.poll();
+                if (message != null) {
+                    messageId = message.getId();
+                    senderId = message.getByteSenderId();
+                    key = encodeMessageKey(messageId, senderId);
+
+                    // System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
+                    synchronized (deliveryLock) {
+                        Object[] pend = pending.get(key);
+                        // System.out.println("Pend null? " + (pend==null));
+
+                        if (pend == null) {
+                            // message from sender is not yet in pending, need to add it
+                            LinkedList<int[]> deliveredMessages;
+                            Integer deliveredLast;
+                            boolean delivered = false;
+
+                            // check if the message has already been FIFO delivered
+                            deliveredLast = deliveredMap.get(senderId);
+                            if (deliveredLast != null && deliveredLast >= messageId) {
+                                delivered = true;
+                            }
+
+                            // if it wasn't FIFO delivered, check if it was already pending for delivery
+                            if (!delivered) {
+                                // the message is not yet FIFO delivered, and it was not in pending, so add it
+                                pend = new Object[]{message, (short) 1};
+                                pending.put(key, pend);
+                                bebBroadcastForward(message);
+                            }
+                        } else {
+                            // message is already in pending
+                            // System.out.println("+1 ack");
+                            pend[1] = (short) ((short) pend[1] + 1);
+                            // System.out.println("Acks: " + pend[1]);
+                        }
+
+                        // check if the message has majority ack
+                        if (pend != null && (short) pend[1] >= N) {
+                            Integer deliveredLast = deliveredMap.get(senderId);
+                            // check if the message is the next in line
+                            if (messageId == 1 || (deliveredLast != null && messageId == deliveredLast + 1)) {
+                                // if it is, FIFO deliver it
+                                fifoDeliver(messageId, senderId);
+                                // can remove from pending because it checks if message was already delivered when it gets one
+                                pending.remove(key);
+                            }
+                        }
+                    }
                 }
-
-                // if it wasn't FIFO delivered, check if it was already pending for delivery
-                if (!delivered) {
-                    // the message is not yet FIFO delivered, and it was not in pending, so add it
-                    pend = new Object[]{message, (short) 1};
-                    pending.put(key, pend);
-                    bebBroadcastForward(message);
-                }
-            } else {
-                // message is already in pending
-                // System.out.println("+1 ack");
-                pend[1] = (short) ((short) pend[1] + 1);
-                // System.out.println("Acks: " + pend[1]);
-            }
-
-            // check if the message has majority ack
-            if (pend != null && (short) pend[1] >= N) {
-                Integer deliveredLast = deliveredMap.get(senderId);
-                // check if the message is the next in line
-                if (deliveredLast == null || messageId == deliveredLast + 1) {
-                    // if it is, FIFO deliver it
-                    fifoDeliver(messageId, senderId);
-                }
-                // can remove from pending because it checks if message was already delivered when it gets one
-                pending.remove(key);
             }
         }
+    }
+
+    public void plDeliver(Message message) {
+        plDeliveryThread.plDeliver(message);
     }
 
     private void fifoDeliver(int messageId, byte senderId) {
         // edit the last delivered
         myHost.logDeliver(senderId, messageId);
+        // .println("First FIFO delivery: " + messageId + " from " + (senderId + 1));
+        // System.out.println("Key: " + encodeMessageKey(messageId, senderId));
 
         // check if the first pending for delivery are next in line
 
         int nextMessage = messageId + 1;
         Long key = encodeMessageKey(nextMessage, senderId);
+        // System.out.println("Trying next, key: " + key);
+        // System.out.println(pending.get(key) == null);
         Object[] pend;
         // check if the next message is in pending and has majority ack
         while ((pend = pending.get(key)) != null && (short) pend[1] >= N) {
             myHost.logDeliver(senderId, nextMessage);
+            // System.out.println("Also delivered: " + nextMessage + " from " + (senderId + 1));
             // remove from pending when delivered
             pending.remove(key);
             // increment next message
             nextMessage++;
-            key = encodeMessageKey(senderId, nextMessage);
+            key = encodeMessageKey(nextMessage, senderId);
         }
 
         // add the last FIFO delivered message to the map for the sender

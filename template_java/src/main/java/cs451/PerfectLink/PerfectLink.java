@@ -18,7 +18,7 @@ public class PerfectLink {
     private final String myIp;
     private final int myPort;
 
-    // URB broacaster
+    // URB broadcaster
     private URB broadcaster;
 
     // socket
@@ -64,7 +64,8 @@ public class PerfectLink {
     private final Queue<Queue<Message>> listPool = new LinkedList<>();
 
     // structure for already delivered messages in receiving phase
-    private final Map<Byte, LinkedList<int[]>> deliveredMap = new ConcurrentHashMap<>();
+    // notice that it uses the sender ports as keys, and not the senderId, since messages are relayed
+    private final Map<Short, Map<Byte, LinkedList<int[]>>> deliveredMap = new ConcurrentHashMap<>();
     // pool for ByteBuffers to avoid frequent allocations when receiving
     private final ArrayBlockingQueue<ByteBuffer> byteBufferPoolReceiving = new ArrayBlockingQueue<>(10);
     // receiving buffer size
@@ -75,9 +76,6 @@ public class PerfectLink {
     private static final int ACK_BUFF_SIZE = 6;
     // pool of DatagramPackets for sending acks
     private final ArrayBlockingQueue<DatagramPacket> datagramPacketsPool = new ArrayBlockingQueue<>(10);
-
-    // flag for sending done
-    private boolean sendingDone = false;
 
     // constructor for perfect link
     public PerfectLink(Host myHost) {
@@ -179,14 +177,10 @@ public class PerfectLink {
             // if there is none, create the mapping between byte id and host
             hostMapping.putIfAbsent(host.getByteId(), host);
             // get the queue corresponding to the host to send to
-            Queue<Message> messagePackage = messagePackages.get(host);
-            if (messagePackage == null) {
-                messagePackage = new LinkedList<>();
-                messagePackages.put(host, messagePackage);
-            }
+            Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // add message to unacknowledged ones
             Map<Long, Object[]> unacknowledgedFromSender = unacknowledgedMessages.computeIfAbsent(host.getByteId(),
@@ -225,13 +219,13 @@ public class PerfectLink {
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
-        // System.out.println("Resending");
+        System.out.println("Resending");
         synchronized (queueLock) {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -314,20 +308,11 @@ public class PerfectLink {
                 try {
                     // wait before sending again, with adaptive timeout
                     long dynamicTimeout = calculateTimeout();
-                    sleep(dynamicTimeout);
+                    sleep(dynamicTimeout + 100);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                /*
-                for (Byte s : unacknowledgedMessages.keySet()) {
-                    System.out.println("Sender " + (s + 1));
-                    System.out.println("Messages");
-                    for (Long m : unacknowledgedMessages.get(s).keySet()) {
-                        System.out.println(m);
-                    }
-                }
-                */
                 for (Byte host : unacknowledgedMessages.keySet()) {
                     for (Long key : unacknowledgedMessages.get(host).keySet()) {
                         Object[] messagePack = unacknowledgedMessages.get(host).get(key);
@@ -435,6 +420,8 @@ public class PerfectLink {
 
                         int packetLength = packet.getLength();
 
+                        // System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
+
                         // wrap the packet data into the ByteBuffer
                         byteBuffer.put(packet.getData(), 0, packetLength);
                         byteBuffer.flip();
@@ -482,31 +469,48 @@ public class PerfectLink {
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
 
-            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
+            // System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
+            // sender of the message is indicated by the senderPort
+            Map<Byte, LinkedList<int[]>> deliveredFromSender;
             LinkedList<int[]> deliveredMessages;
             synchronized (deliveredMap) {
-                deliveredMessages = deliveredMap.get(senderId);
-                if (deliveredMessages != null) {
-                    i = addMessage(deliveredMessages, messageId);
-                    if (i != -1) {
-                        // message wasn't already delivered
+                deliveredFromSender = deliveredMap.get((short) senderPort);
+                if (deliveredFromSender != null) {
+                    deliveredMessages = deliveredFromSender.get(senderId);
+                    if (deliveredMessages != null) {
+                        i = addMessage(deliveredMessages, messageId);
+                        if (i != -1) {
+                            // message wasn't already delivered
+                            broadcaster.plDeliver(message);
+                        }
+                    } else {
+                        // never received from sender from this port, add to delivered and add sender
+                        // System.out.println("never from senderId");
+                        deliveredMessages = new LinkedList<>();
+
+                        // add to delivered
+                        deliveredMessages.add(new int[]{messageId, messageId});
+                        deliveredFromSender.put(senderId, deliveredMessages);
+
                         broadcaster.plDeliver(message);
                     }
-                    else {
-                        // System.out.println("Already PLDelivered");
-                    }
-                } else {
-                    // never received from sender, add to delivered and add sender
+                }
+                else {
+                    // never received from this port
+                    // System.out.println("never from senderPort");
                     deliveredMessages = new LinkedList<>();
+                    deliveredFromSender = new HashMap<>();
 
                     // add to delivered
                     deliveredMessages.add(new int[]{messageId, messageId});
-                    deliveredMap.put(senderId, deliveredMessages);
+                    deliveredFromSender.put(senderId, deliveredMessages);
+                    deliveredMap.put((short) senderPort, deliveredFromSender);
 
                     broadcaster.plDeliver(message);
                 }
+
             }
 
             // threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
