@@ -210,9 +210,11 @@ public class PerfectLink {
         // if the host has too many unacknowledged messages, wait a bit
         while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
             try {
-                sleep(20);
+                Thread.sleep(20);
             } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+                // exit gracefully if the thread was interrupted
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }

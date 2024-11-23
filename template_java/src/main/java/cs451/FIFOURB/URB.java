@@ -1,6 +1,5 @@
 package cs451.FIFOURB;
 
-import com.sun.source.tree.Tree;
 import cs451.Host;
 import cs451.Message;
 import cs451.PerfectLink.PerfectLink;
@@ -11,8 +10,6 @@ import java.util.concurrent.*;
 public class URB {
     // host parameters
     private final Host myHost;
-
-    private List<Host> otherHosts;
 
     // number of original processes (up to 128, 1 byte)
     private short N = 0;
@@ -25,7 +22,7 @@ public class URB {
 
     // pending list
     // encoding of senderId and messageId as key and message as value
-    private TreeMap<Long, Object[]> pending;
+    private Map<Long, Object[]> pending;
 
     // delivered map
     // keep the last delivered for each sender
@@ -44,7 +41,7 @@ public class URB {
 
     private static final int MAX_PENDING_MESSAGES = 16;
 
-    // create an URB host with the attribute from the host above
+    // create a URB host with the attribute from the host above
     public URB(Host myHost) {
         this.myHost = myHost;
     }
@@ -55,8 +52,6 @@ public class URB {
         myPerfectLinkReceiver.startPerfectLinkReceiver();
         myPerfectLinkReceiver.receiveMessages();
 
-        this.otherHosts = otherHosts;
-
         myPerfectLinkSender = new PerfectLink(myHost, this);
         myPerfectLinkSender.startPerfectLinkSender();
 
@@ -64,7 +59,7 @@ public class URB {
         N = (short) (otherHosts.size()/2);
         // System.out.println("N = " + N);
 
-        pending = new TreeMap<>();
+        pending = new HashMap<>();
 
         // thread for broadcasting
         broadcastThread = new BebBroadcastThread(myHost, otherHosts);
@@ -93,6 +88,8 @@ public class URB {
             long key = encodeMessageKey(message.getId(), message.getByteSenderId());
             // add to pending, with 0 acks
             pending.put(key, new Object[]{message, (short) 0});
+
+            System.out.println("URB broadcast " + message.getId());
 
             /*
             for (Long k : pending.keySet()) {
@@ -152,11 +149,11 @@ public class URB {
                     // if no message to relay, send a new one
                     message = messageQueue.poll();
                     if (message != null) {
-                        System.out.println("Broadcasting my message");
+                        System.out.println("Broadcasting my message " + message.getId());
                     }
                 }
                 else {
-                    System.out.println("Relaying message");
+                    System.out.println("Relaying message " + message.getId() + " from " + message.getSenderId());
                 }
 
                 if (message != null) {
@@ -206,8 +203,6 @@ public class URB {
                         // System.out.println("Pend null? " + (pend==null));
 
                         if (pend == null) {
-                            // message from sender is not yet in pending, need to add it
-                            LinkedList<int[]> deliveredMessages;
                             Integer deliveredLast;
                             boolean delivered = false;
 
@@ -217,7 +212,6 @@ public class URB {
                                 delivered = true;
                             }
 
-                            // if it wasn't FIFO delivered, check if it was already pending for delivery
                             if (!delivered) {
                                 // the message is not yet FIFO delivered, and it was not in pending, so add it
                                 pend = new Object[]{message, (short) 1};
@@ -287,15 +281,5 @@ public class URB {
     public static long encodeMessageKey(int messageId, int senderId) {
         // shift the senderId to the upper bits and combine with messageId
         return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
-    }
-
-    public static int getSenderId(long key) {
-        // extract the upper 7 bits
-        return (int) (key >>> 31);
-    }
-
-    public static int getMessageId(long key) {
-        // extract the lower 31 bits
-        return (int) (key & 0x7FFFFFFF);
     }
 }
