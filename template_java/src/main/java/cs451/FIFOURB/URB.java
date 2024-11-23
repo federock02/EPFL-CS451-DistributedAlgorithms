@@ -39,7 +39,7 @@ public class URB {
 
     private boolean flagStopProcessing = false;
 
-    private static final int MAX_PENDING_MESSAGES = 16;
+    private static final int MAX_PENDING_MESSAGES = 100;
 
     // create a URB host with the attribute from the host above
     public URB(Host myHost) {
@@ -48,6 +48,10 @@ public class URB {
 
     // initialize the URB host with the info of all correct processes to which it will broadcast
     public void startURBBroadcaster(List<Host> otherHosts) {
+        // thread for pl delivery
+        plDeliveryThread = new PlDeliveryThread();
+        plDeliveryThread.start();
+
         myPerfectLinkReceiver = new PerfectLink(myHost, this);
         myPerfectLinkReceiver.startPerfectLinkReceiver();
         myPerfectLinkReceiver.receiveMessages();
@@ -64,10 +68,6 @@ public class URB {
         // thread for broadcasting
         broadcastThread = new BebBroadcastThread(myHost, otherHosts);
         broadcastThread.start();
-
-        // thread for pl delivery
-        plDeliveryThread = new PlDeliveryThread();
-        plDeliveryThread.start();
     }
 
     public void stopProcessing() {
@@ -89,7 +89,7 @@ public class URB {
             // add to pending, with 0 acks
             pending.put(key, new Object[]{message, (short) 0});
 
-            System.out.println("URB broadcast " + message.getId());
+            // System.out.println("URB broadcast " + message.getId());
 
             /*
             for (Long k : pending.keySet()) {
@@ -149,11 +149,11 @@ public class URB {
                     // if no message to relay, send a new one
                     message = messageQueue.poll();
                     if (message != null) {
-                        System.out.println("Broadcasting my message " + message.getId());
+                        // System.out.println("Broadcasting my message " + message.getId());
                     }
                 }
                 else {
-                    System.out.println("Relaying message " + message.getId() + " from " + message.getSenderId());
+                    // System.out.println("Relaying message " + message.getId() + " from " + message.getSenderId());
                 }
 
                 if (message != null) {

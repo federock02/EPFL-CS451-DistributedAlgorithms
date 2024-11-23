@@ -221,7 +221,7 @@ public class PerfectLink {
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
-        System.out.println("Resending");
+        // System.out.println("Resending");
         synchronized (queueLock) {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);

@@ -11,12 +11,10 @@ import java.util.concurrent.TimeUnit;
 
 public class Logger {
     private final ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
-    private String outputPath;
     private static final int BUFFER_SIZE = 1000;
     private BufferedWriter writer;
 
     public Logger(String outputPath) {
-        this.outputPath = outputPath;
         File file = new File(outputPath);
 
         // ensure the parent directory exists
