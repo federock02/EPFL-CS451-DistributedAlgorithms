@@ -36,6 +36,8 @@ public class PerfectLink {
 
     // thread pool
     private ThreadPoolExecutor threadPool;
+    // thread for not blocking caller when sending
+    private SendThread sendThread;
     // private ThreadPoolExecutor ackListener;
 
     // flag used to manage termination signals
@@ -90,12 +92,6 @@ public class PerfectLink {
         this.broadcaster = broadcaster;
     }
 
-    // starting perfect link sender, with personalized maxNumPerPackage
-    public void startPerfectLinkSender(int maxNumPerPackage) {
-        startPerfectLinkSender();
-        this.maxNumPerPackage = maxNumPerPackage;
-    }
-
     // starting perfect link sender, with default maxNumPerPackage
     public void startPerfectLinkSender() {
         try {
@@ -107,6 +103,9 @@ public class PerfectLink {
         catch (SocketException | UnknownHostException e) {
             e.printStackTrace();
         }
+
+        sendThread = new SendThread();
+        sendThread.start();
 
         listenForAcks();
         startResendScheduler();
@@ -173,50 +172,7 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message, Host host) {
-        synchronized (queueLock) {
-            // if there is none, create the mapping between byte id and host
-            hostMapping.putIfAbsent(host.getByteId(), host);
-            // get the queue corresponding to the host to send to
-            Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
-            // add the message to the queue
-            messagePackage.add(message);
-            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
-
-            // add message to unacknowledged ones
-            Map<Long, Object[]> unacknowledgedFromSender = unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                    k -> new ConcurrentHashMap<>());
-            unacknowledgedFromSender.put(encodeMessageKey(message.getId(), message.getByteSenderId()),
-                    new Object[]{message, System.currentTimeMillis()});
-
-            // check if queue for this host har reached the size
-            if (messagePackage.size() >= maxNumPerPackage) {
-                Queue<Message> toSend = borrowList();
-                toSend.addAll(messagePackage);
-                sendMessagesBatch(toSend, host);
-                messagePackage.clear();
-                resetTimeout();
-            } else {
-                // otherwise, if there is none, start the timer
-                if (timeoutTask == null || timeoutTask.isCancelled()) {
-                    timeoutTask = scheduler.schedule(() -> {
-                        Queue<Message> toSend = borrowList();
-                        toSend.addAll(messagePackages.get(host));
-                        sendMessagesBatch(toSend, host);
-                        messagePackages.get(host).clear();
-                    }, SEND_TIMER, TimeUnit.MILLISECONDS);
-                }
-            }
-        }
-        // if the host has too many unacknowledged messages, wait a bit
-        while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
-            try {
-                Thread.sleep(20);
-            } catch (InterruptedException e) {
-                // exit gracefully if the thread was interrupted
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
+        sendThread.send(message, host);
     }
 
     // resend primitive, implements the same logic as sending
@@ -249,6 +205,71 @@ public class PerfectLink {
             }
         }
     }
+
+    class SendThread extends Thread {
+        Queue<Object[]> outgoing = new ConcurrentLinkedQueue<>();
+        Host host;
+        Message message;
+
+        public void send(Message message, Host host) {
+            outgoing.add(new Object[]{host, message});
+        }
+
+        public void run() {
+            while (true) {
+                Object[] entry = outgoing.poll();
+                if (entry != null) {
+                    host = (Host) entry[0];
+                    message = (Message) entry[1];
+                    synchronized (queueLock) {
+                        // if there is none, create the mapping between byte id and host
+                        hostMapping.putIfAbsent(host.getByteId(), host);
+                        // get the queue corresponding to the host to send to
+                        Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
+                        // add the message to the queue
+                        messagePackage.add(message);
+                        // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+
+                        // add message to unacknowledged ones
+                        Map<Long, Object[]> unacknowledgedFromSender = unacknowledgedMessages.computeIfAbsent(host.getByteId(),
+                                k -> new ConcurrentHashMap<>());
+                        unacknowledgedFromSender.put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                                new Object[]{message, System.currentTimeMillis()});
+
+                        // check if queue for this host har reached the size
+                        if (messagePackage.size() >= maxNumPerPackage) {
+                            Queue<Message> toSend = borrowList();
+                            toSend.addAll(messagePackage);
+                            sendMessagesBatch(toSend, host);
+                            messagePackage.clear();
+                            resetTimeout();
+                        } else {
+                            // otherwise, if there is none, start the timer
+                            if (timeoutTask == null || timeoutTask.isCancelled()) {
+                                timeoutTask = scheduler.schedule(() -> {
+                                    Queue<Message> toSend = borrowList();
+                                    toSend.addAll(messagePackages.get(host));
+                                    sendMessagesBatch(toSend, host);
+                                    messagePackages.get(host).clear();
+                                }, SEND_TIMER, TimeUnit.MILLISECONDS);
+                            }
+                        }
+                    }
+                    // if the host has too many unacknowledged messages, wait a bit
+                    while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
+                        try {
+                            Thread.sleep(20);
+                        } catch (InterruptedException e) {
+                            // exit gracefully if the thread was interrupted
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 
     private Queue<Message> borrowList() {
         return listPool.isEmpty() ? new LinkedList<>() : listPool.poll();
