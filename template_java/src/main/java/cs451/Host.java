@@ -104,6 +104,11 @@ public class Host {
     public void broadcastMessage(Message message) {
         if (!flagStopProcessing) {
             broadcaster.urbBroadcast(message);
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
             System.out.println("Inserted new " + message.getId());
             logBroadcast(message.getId());
         }
