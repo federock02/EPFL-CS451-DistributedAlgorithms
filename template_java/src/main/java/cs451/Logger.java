@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 public class Logger {
     private final ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
-    private static final int BUFFER_SIZE = 1000;
+    private static final int BUFFER_SIZE = 5000;
     private BufferedWriter writer;
 
     public Logger(String outputPath) {
@@ -32,9 +32,6 @@ public class Logger {
         } catch (IOException e) {
             e.printStackTrace();
         }
-
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        scheduler.scheduleAtFixedRate(this::logWriteToFile, 5, 5, TimeUnit.SECONDS);
     }
 
     public void logBroadcast(int messageId) {

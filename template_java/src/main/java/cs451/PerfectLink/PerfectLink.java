@@ -36,8 +36,10 @@ public class PerfectLink {
 
     // thread pool
     private ThreadPoolExecutor threadPool;
+    /*
     // thread for not blocking caller when sending
     private SendThread sendThread;
+    */
     // private ThreadPoolExecutor ackListener;
 
     // flag used to manage termination signals
@@ -104,8 +106,10 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
+        /*
         sendThread = new SendThread();
         sendThread.start();
+        */
 
         listenForAcks();
         startResendScheduler();
@@ -171,6 +175,45 @@ public class PerfectLink {
     // -----------------------------------------------------------------------------------------------------------------
 
     // send primitive for p2p perfect link
+    public void send(Message message, Host host) {
+        synchronized (queueLock) {
+            // if there is none, create the mapping between byte id and host
+            hostMapping.putIfAbsent(host.getByteId(), host);
+            // get the queue corresponding to the host to send to
+            Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
+            // add the message to the queue
+            messagePackage.add(message);
+            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+
+            // add message to unacknowledged ones
+            unacknowledgedMessages.computeIfAbsent(host.getByteId(),
+                    k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                    new Object[]{message, System.currentTimeMillis()});
+
+            // check if queue for this host har reached the size
+            if (messagePackage.size() >= maxNumPerPackage) {
+                Queue<Message> toSend = borrowList();
+                toSend.addAll(messagePackage);
+                sendMessagesBatch(toSend, host);
+                messagePackage.clear();
+                ScheduledFuture<?> existingTask = timeoutTasks.remove(host);
+                if (existingTask != null) {
+                    existingTask.cancel(false);
+                }
+            } else {
+                // otherwise, if there is none, start the timer
+                timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
+                    Queue<Message> toSend = borrowList();
+                    toSend.addAll(messagePackages.get(h));
+                    sendMessagesBatch(toSend, h);
+                    messagePackages.get(h).clear();
+                    timeoutTasks.remove(h);
+                }, SEND_TIMER, TimeUnit.MILLISECONDS));
+            }
+        }
+    }
+
+    /*
     public void send(Message message, Host host) {
         sendThread.send(message, host);
     }
@@ -242,6 +285,7 @@ public class PerfectLink {
             }
         }
     }
+    */
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
