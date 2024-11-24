@@ -55,7 +55,7 @@ public class PerfectLink {
     // executor that manages the timeout for sending the package
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     // task for sending the package
-    private ScheduledFuture<?> timeoutTask;
+    private final Map<Host, ScheduledFuture<?>> timeoutTasks = new ConcurrentHashMap<>();
 
     // map from all the other hosts to a map from long encoding the messageId and senderId to the messagePack
     private final Map<Byte, Map<Long, Object[]>> unacknowledgedMessages = new ConcurrentHashMap<>();
@@ -175,37 +175,6 @@ public class PerfectLink {
         sendThread.send(message, host);
     }
 
-    // resend primitive, implements the same logic as sending
-    public void resend(Message message, Host host) {
-        // System.out.println("Resending");
-        synchronized (queueLock) {
-            // get the queue corresponding to the host to send to
-            Queue<Message> messagePackage = messagePackages.get(host);
-            // add the message to the queue
-            messagePackage.add(message);
-            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
-
-            // check if queue for this host har reached the size
-            if (messagePackage.size() >= maxNumPerPackage) {
-                Queue<Message> toSend = borrowList();
-                toSend.addAll(messagePackage);
-                sendMessagesBatch(toSend, host);
-                messagePackage.clear();
-                resetTimeout();
-            } else {
-                // otherwise, if there is none, start the timer
-                if (timeoutTask == null || timeoutTask.isCancelled()) {
-                    timeoutTask = scheduler.schedule(() -> {
-                        Queue<Message> toSend = borrowList();
-                        toSend.addAll(messagePackages.get(host));
-                        sendMessagesBatch(toSend, host);
-                        messagePackages.get(host).clear();
-                    }, SEND_TIMER, TimeUnit.MILLISECONDS);
-                }
-            }
-        }
-    }
-
     class SendThread extends Thread {
         Queue<Object[]> outgoing = new ConcurrentLinkedQueue<>();
         Host host;
@@ -231,9 +200,8 @@ public class PerfectLink {
                         // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
                         // add message to unacknowledged ones
-                        Map<Long, Object[]> unacknowledgedFromSender = unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                                k -> new ConcurrentHashMap<>());
-                        unacknowledgedFromSender.put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
+                                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
                                 new Object[]{message, System.currentTimeMillis()});
 
                         // check if queue for this host har reached the size
@@ -242,23 +210,28 @@ public class PerfectLink {
                             toSend.addAll(messagePackage);
                             sendMessagesBatch(toSend, host);
                             messagePackage.clear();
-                            resetTimeout();
+                            ScheduledFuture<?> existingTask = timeoutTasks.remove(host);
+                            if (existingTask != null) {
+                                existingTask.cancel(false);
+                            }
                         } else {
                             // otherwise, if there is none, start the timer
-                            if (timeoutTask == null || timeoutTask.isCancelled()) {
-                                timeoutTask = scheduler.schedule(() -> {
-                                    Queue<Message> toSend = borrowList();
-                                    toSend.addAll(messagePackages.get(host));
-                                    sendMessagesBatch(toSend, host);
-                                    messagePackages.get(host).clear();
-                                }, SEND_TIMER, TimeUnit.MILLISECONDS);
-                            }
+                            timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
+                                Queue<Message> toSend = borrowList();
+                                toSend.addAll(messagePackages.get(h));
+                                sendMessagesBatch(toSend, h);
+                                messagePackages.get(h).clear();
+                                timeoutTasks.remove(h);
+                            }, SEND_TIMER, TimeUnit.MILLISECONDS));
                         }
                     }
+
+                    int waitTime = 10;
                     // if the host has too many unacknowledged messages, wait a bit
                     while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
                         try {
-                            Thread.sleep(20);
+                            Thread.sleep(waitTime);
+                            waitTime = Math.min(waitTime * 2, 200);
                         } catch (InterruptedException e) {
                             // exit gracefully if the thread was interrupted
                             Thread.currentThread().interrupt();
@@ -270,6 +243,38 @@ public class PerfectLink {
         }
     }
 
+    // resend primitive, implements the same logic as sending
+    public void resend(Message message, Host host) {
+        // System.out.println("Resending");
+        synchronized (queueLock) {
+            // get the queue corresponding to the host to send to
+            Queue<Message> messagePackage = messagePackages.get(host);
+            // add the message to the queue
+            messagePackage.add(message);
+            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+
+            // check if queue for this host har reached the size
+            if (messagePackage.size() >= maxNumPerPackage) {
+                Queue<Message> toSend = borrowList();
+                toSend.addAll(messagePackage);
+                sendMessagesBatch(toSend, host);
+                messagePackage.clear();
+                ScheduledFuture<?> existingTask = timeoutTasks.remove(host);
+                if (existingTask != null) {
+                    existingTask.cancel(false);
+                }
+            } else {
+                // otherwise, if there is none, start the timer
+                timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
+                    Queue<Message> toSend = borrowList();
+                    toSend.addAll(messagePackages.get(h));
+                    sendMessagesBatch(toSend, h);
+                    messagePackages.get(h).clear();
+                    timeoutTasks.remove(h);
+                }, SEND_TIMER, TimeUnit.MILLISECONDS));
+            }
+        }
+    }
 
     private Queue<Message> borrowList() {
         return listPool.isEmpty() ? new LinkedList<>() : listPool.poll();
@@ -278,12 +283,6 @@ public class PerfectLink {
     private void returnList(Queue<Message> list) {
         list.clear();
         listPool.offer(list);
-    }
-
-    private void resetTimeout() {
-        if (timeoutTask != null) {
-            timeoutTask.cancel(false);
-        }
     }
 
     // logic for creating the package and then sending it message from host to another host
@@ -336,14 +335,13 @@ public class PerfectLink {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                for (Byte host : unacknowledgedMessages.keySet()) {
-                    for (Long key : unacknowledgedMessages.get(host).keySet()) {
-                        Object[] messagePack = unacknowledgedMessages.get(host).get(key);
+                unacknowledgedMessages.forEach((host, messages) -> {
+                    messages.forEach((key, messagePack) -> {
                         if (messagePack != null) {
                             resend((Message) messagePack[0], hostMapping.get(host));
                         }
-                    }
-                }
+                    });
+                });
             }
         }).start();
     }

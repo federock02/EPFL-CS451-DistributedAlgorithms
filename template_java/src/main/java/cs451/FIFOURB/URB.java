@@ -83,25 +83,19 @@ public class URB {
     // -----------------------------------------------------------------------------------------------------------------
 
     // URB broadcast primitive
-    public boolean urbBroadcast(Message message) {
-        if (!flagStopProcessing && pending.size() < MAX_PENDING_MESSAGES) {
-            long key = encodeMessageKey(message.getId(), message.getByteSenderId());
-            // add to pending, with 0 acks
-            pending.put(key, new Object[]{message, (short) 0});
+    public void urbBroadcast(Message message) {
+        long key = encodeMessageKey(message.getId(), message.getByteSenderId());
+        // add to pending, with 0 acks
+        pending.put(key, new Object[]{message, (short) 0});
 
-            // System.out.println("URB broadcast " + message.getId());
+        // System.out.println("URB broadcast " + message.getId());
 
-            /*
-            for (Long k : pending.keySet()) {
-                System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
-            }
-            */
-            bebBroadcastNew(message);
-            return true;
+        /*
+        for (Long k : pending.keySet()) {
+            System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
         }
-        else {
-            return false;
-        }
+        */
+        bebBroadcastNew(message);
     }
 
     private void bebBroadcastNew(Message message) {
