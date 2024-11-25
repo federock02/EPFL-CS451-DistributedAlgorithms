@@ -301,6 +301,7 @@ public class PerfectLink {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
             if (messagePackage == null) {
+                System.out.println("messagePackage is null");
                 return;
             }
             // add the message to the queue
