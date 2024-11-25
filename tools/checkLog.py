@@ -35,7 +35,7 @@ def check_fifo_order(log_file):
         if messages != sorted(messages):
             print(f"Out-of-order messages for sender {sender_id}: {messages}")
         else:
-            print(f"Messages in order for sender {sender_id}")
+            print(f"{len(messages)} messages in order for sender {sender_id}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
