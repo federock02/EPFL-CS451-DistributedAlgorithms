@@ -185,7 +185,11 @@ public class PerfectLink {
             // if there is none, create the mapping between byte id and host
             hostMapping.putIfAbsent(host.getByteId(), host);
             // get the queue corresponding to the host to send to
-            Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
+            // Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
+            Queue<Message> messagePackage = messagePackages.get(host);
+            if (messagePackage == null) {
+                messagePackage = new LinkedList<>();
+            }
             // add the message to the queue
             messagePackage.add(message);
             System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
@@ -296,6 +300,9 @@ public class PerfectLink {
         synchronized (queueLock) {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
+            if (messagePackage == null) {
+                return;
+            }
             // add the message to the queue
             messagePackage.add(message);
             System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
@@ -384,10 +391,23 @@ public class PerfectLink {
                     break;
                 }
                 unacknowledgedMessages.forEach((host, messages) -> {
+                    if (messages == null) {
+                        System.err.println("Null messages map for host: " + host);
+                        return;
+                    }
                     messages.forEach((key, messagePack) -> {
-                        if (messagePack != null) {
-                            resend((Message) messagePack[0], hostMapping.get(host));
+                        if (messagePack == null) {
+                            System.err.println("Null messagePack for key: " + key + " in host: " + host);
+                            return;
                         }
+
+                        Host destination = hostMapping.get(host);
+                        if (destination == null) {
+                            System.err.println("Host mapping returned null for host: " + host);
+                            return;
+                        }
+
+                        resend((Message) messagePack[0], destination);
                     });
                 });
             }

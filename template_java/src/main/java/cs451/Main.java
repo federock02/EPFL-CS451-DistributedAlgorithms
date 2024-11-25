@@ -11,12 +11,12 @@ public class Main {
     private static void handleSignal() {
         Process process;
         //immediately stop network packet processing
-        System.out.println("Immediately stopping network packet processing.");
         myHost.stopProcessing();
+        System.out.println("Immediately stopping network packet processing.");
 
         //write/flush output file if necessary
-        System.out.println("Writing output.");
         myHost.flushLog();
+        System.out.println("Writing output.");
     }
 
     // initializes a shutdown hook, thread that runs while Java VM is shutting down, for graceful shutdown

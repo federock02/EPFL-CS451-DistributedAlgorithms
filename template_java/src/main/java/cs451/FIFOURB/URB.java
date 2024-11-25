@@ -89,7 +89,7 @@ public class URB {
             // add to pending, with 0 acks
             pending.put(key, new Object[]{message, (short) 0});
 
-            System.out.println("URB broadcast " + message.getId());
+            // System.out.println("URB broadcast " + message.getId());
 
             /*
             for (Long k : pending.keySet()) {
