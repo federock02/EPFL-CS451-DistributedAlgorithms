@@ -189,6 +189,7 @@ public class PerfectLink {
             Queue<Message> messagePackage = messagePackages.get(host);
             if (messagePackage == null) {
                 messagePackage = new LinkedList<>();
+                messagePackages.put(host, messagePackage);
             }
             // add the message to the queue
             messagePackage.add(message);
@@ -219,80 +220,6 @@ public class PerfectLink {
             }
         }
     }
-
-    /*
-    public void send(Message message, Host host) {
-        sendThread.send(message, host);
-    }
-
-    class SendThread extends Thread {
-        Queue<Object[]> outgoing = new ConcurrentLinkedQueue<>();
-        Host host;
-        Message message;
-
-        public void send(Message message, Host host) {
-            outgoing.add(new Object[]{host, message});
-        }
-
-        public void run() {
-            while (true) {
-                Object[] entry = outgoing.poll();
-                if (entry != null) {
-                    host = (Host) entry[0];
-                    message = (Message) entry[1];
-                    synchronized (queueLock) {
-                        // if there is none, create the mapping between byte id and host
-                        hostMapping.putIfAbsent(host.getByteId(), host);
-                        // get the queue corresponding to the host to send to
-                        Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
-                        // add the message to the queue
-                        messagePackage.add(message);
-                        // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
-
-                        // add message to unacknowledged ones
-                        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
-                                new Object[]{message, System.currentTimeMillis()});
-
-                        // check if queue for this host har reached the size
-                        if (messagePackage.size() >= maxNumPerPackage) {
-                            Queue<Message> toSend = borrowList();
-                            toSend.addAll(messagePackage);
-                            sendMessagesBatch(toSend, host);
-                            messagePackage.clear();
-                            ScheduledFuture<?> existingTask = timeoutTasks.remove(host);
-                            if (existingTask != null) {
-                                existingTask.cancel(false);
-                            }
-                        } else {
-                            // otherwise, if there is none, start the timer
-                            timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                                Queue<Message> toSend = borrowList();
-                                toSend.addAll(messagePackages.get(h));
-                                sendMessagesBatch(toSend, h);
-                                messagePackages.get(h).clear();
-                                timeoutTasks.remove(h);
-                            }, SEND_TIMER, TimeUnit.MILLISECONDS));
-                        }
-                    }
-
-                    int waitTime = 10;
-                    // if the host has too many unacknowledged messages, wait a bit
-                    while (unacknowledgedMessages.get(host.getByteId()).size() >= 100) {
-                        try {
-                            Thread.sleep(waitTime);
-                            waitTime = Math.min(waitTime * 2, 200);
-                        } catch (InterruptedException e) {
-                            // exit gracefully if the thread was interrupted
-                            Thread.currentThread().interrupt();
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    */
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
