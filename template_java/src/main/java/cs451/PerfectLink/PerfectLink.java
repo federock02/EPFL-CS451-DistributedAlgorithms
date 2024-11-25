@@ -176,6 +176,11 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message, Host host) {
+        // add message to unacknowledged ones
+        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
+                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                new Object[]{message, System.currentTimeMillis()});
+
         synchronized (queueLock) {
             // if there is none, create the mapping between byte id and host
             hostMapping.putIfAbsent(host.getByteId(), host);
@@ -183,16 +188,14 @@ public class PerfectLink {
             Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
             // add the message to the queue
             messagePackage.add(message);
-            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
-
-            // add message to unacknowledged ones
-            unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                    k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
-                    new Object[]{message, System.currentTimeMillis()});
+            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
+                if (toSend == null) {
+                    System.out.println("toSend is null");
+                }
                 toSend.addAll(messagePackage);
                 sendMessagesBatch(toSend, host);
                 messagePackage.clear();
@@ -295,7 +298,7 @@ public class PerfectLink {
             Queue<Message> messagePackage = messagePackages.get(host);
             // add the message to the queue
             messagePackage.add(message);
-            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -340,10 +343,11 @@ public class PerfectLink {
         ByteBuffer buffer = ByteBuffer.allocate(totalSize);
 
         // serialize each message and add to buffer
+        byte[] serializedMessage;
         while (!messagePackage.isEmpty()) {
             if (!flagStopProcessing) {
                 Message message = messagePackage.poll();
-                byte[] serializedMessage = message.serialize();
+                serializedMessage = message.serialize();
                 buffer.putInt(serializedMessage.length);
                 buffer.put(serializedMessage);
             }
@@ -427,7 +431,7 @@ public class PerfectLink {
                     byte receiver = byteBuffer.get();
                     // System.out.println("Received ack for " + messageId);
 
-                    // System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
+                    System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
                     /*
                     for (Byte host : unacknowledgedMessages.keySet()) {
                         System.out.println("Sender " + (s + 1));
@@ -485,7 +489,7 @@ public class PerfectLink {
 
                         int packetLength = packet.getLength();
 
-                        // System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
+                        System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
 
                         // wrap the packet data into the ByteBuffer
                         byteBuffer.put(packet.getData(), 0, packetLength);
@@ -534,7 +538,7 @@ public class PerfectLink {
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
 
-            // System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
+            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
             // sender of the message is indicated by the senderPort
@@ -609,7 +613,7 @@ public class PerfectLink {
             ackPacket.setData(byteAckData);
             ackPacket.setAddress(senderAddress);
             ackPacket.setPort(senderPort);
-            // System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
+            System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
         if (!flagStopProcessing) {
@@ -687,16 +691,6 @@ public class PerfectLink {
     public static long encodeMessageKey(int messageId, int senderId) {
         // shift the senderId to the upper bits and combine with messageId
         return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
-    }
-
-    public static int getSenderId(long key) {
-        // extract the upper 7 bits
-        return (int) (key >>> 31);
-    }
-
-    public static int getMessageId(long key) {
-        // extract the lower 31 bits
-        return (int) (key & 0x7FFFFFFF);
     }
 
 }
