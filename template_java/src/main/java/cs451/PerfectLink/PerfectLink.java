@@ -182,13 +182,13 @@ public class PerfectLink {
             }
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
                 if (toSend == null) {
-                    System.out.println("toSend is null");
+                    // System.out.println("toSend is null");
                     toSend = new LinkedList<>();
                 }
                 toSend.addAll(messagePackage);
@@ -229,12 +229,12 @@ public class PerfectLink {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
             if (messagePackage == null) {
-                System.out.println("messagePackage is null");
+                // System.out.println("messagePackage is null");
                 return;
             }
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -335,12 +335,12 @@ public class PerfectLink {
                     Byte host = receiver.getKey();
                     Map<Long, Object[]>  messages = receiver.getValue();
                     if (messages == null) {
-                        System.err.println("Null messages map for host: " + (receiver.getKey() + 1));
+                        // System.err.println("Null messages map for host: " + (receiver.getKey() + 1));
                         continue;
                     }
                     int length = messages.size();
                     int sendNum = sample(length);
-                    System.out.println("Sample " + sendNum + " out of " + length);
+                    // System.out.println("Sample " + sendNum + " out of " + length);
 
                     for (Map.Entry<Long, Object[]> entry : messages.entrySet()) {
                         if (sendNum == 0) {
@@ -349,13 +349,13 @@ public class PerfectLink {
 
                         Object[] messagePack = entry.getValue();
                         if (messagePack == null) {
-                            System.err.println("Null messagePack for key: " + entry.getKey() + " in host: " + host);
+                            // System.err.println("Null messagePack for key: " + entry.getKey() + " in host: " + host);
                             return;
                         }
 
                         Host destination = hostMapping.get(host);
                         if (destination == null) {
-                            System.err.println("Host mapping returned null for host: " + host);
+                            // System.err.println("Host mapping returned null for host: " + host);
                             return;
                         }
 
@@ -421,7 +421,7 @@ public class PerfectLink {
                     byte receiver = byteBuffer.get();
                     // System.out.println("Received ack for " + messageId);
 
-                    System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
+                    // System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
 
                     // long currentTime = System.currentTimeMillis();
                     long key = encodeMessageKey(messageId, senderId);
@@ -476,7 +476,7 @@ public class PerfectLink {
 
                         packetLength = packet.getLength();
 
-                        System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
+                        // System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
 
                         // wrap the packet data into the ByteBuffer
                         byteBuffer.put(packet.getData(), 0, packetLength);
@@ -512,7 +512,7 @@ public class PerfectLink {
             int messageSize = byteBuffer.getInt();
 
             if (byteBuffer.position() + messageSize > packetLength) {
-                System.err.println("Incomplete message");
+                // System.err.println("Incomplete message");
                 break;
             }
 
@@ -528,7 +528,7 @@ public class PerfectLink {
             threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
             // sendAck(messageId, senderId, senderAddress, senderPort);
 
-            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
+            // System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
             // sender of the message is indicated by the senderPort
@@ -600,7 +600,7 @@ public class PerfectLink {
             ackPacket.setData(byteAckData);
             ackPacket.setAddress(senderAddress);
             ackPacket.setPort(senderPort);
-            System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
+            // System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
         if (!flagStopProcessing) {

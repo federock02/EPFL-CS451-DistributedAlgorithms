@@ -116,7 +116,7 @@ public class Main {
             myHost.broadcastMessage(new Message(i, i, myId));
             // System.out.println("Added new message for host " + myId);
         }
-        System.out.println("Done");
+        // System.out.println("Done");
 
 
         threadPool.shutdown();

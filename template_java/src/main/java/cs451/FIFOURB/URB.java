@@ -143,11 +143,11 @@ public class URB {
                     // if no message to relay, send a new one
                     message = messageQueue.poll();
                     if (message != null) {
-                        System.out.println("Broadcasting my message " + message.getId());
+                        // System.out.println("Broadcasting my message " + message.getId());
                     }
                 }
                 else {
-                    System.out.println("Relaying message " + message.getId() + " from " + message.getSenderId());
+                    // System.out.println("Relaying message " + message.getId() + " from " + message.getSenderId());
                 }
 
                 if (message != null) {
@@ -191,7 +191,7 @@ public class URB {
                     senderId = message.getByteSenderId();
                     key = encodeMessageKey(messageId, senderId);
 
-                    System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
+                    // System.out.println("plDeliver " + messageId + " from " + (senderId + 1));
                     synchronized (deliveryLock) {
                         Object[] pend = pending.get(key);
                         // System.out.println("Pend null? " + (pend==null));
@@ -216,7 +216,7 @@ public class URB {
                             // message is already in pending
                             // System.out.println("+1 ack");
                             pend[1] = (short) ((short) pend[1] + 1);
-                            System.out.println("Acks: " + pend[1]);
+                            // System.out.println("Acks: " + pend[1]);
                         }
 
                         // check if the message has majority ack
@@ -243,7 +243,7 @@ public class URB {
     private void fifoDeliver(int messageId, byte senderId) {
         // edit the last delivered
         myHost.logDeliver(senderId, messageId);
-        System.out.println("First FIFO delivery: " + messageId + " from " + (senderId + 1));
+        // System.out.println("First FIFO delivery: " + messageId + " from " + (senderId + 1));
         // System.out.println("Key: " + encodeMessageKey(messageId, senderId));
 
         // check if the first pending for delivery are next in line
@@ -256,7 +256,7 @@ public class URB {
         // check if the next message is in pending and has majority ack
         while ((pend = pending.get(key)) != null && (short) pend[1] >= N) {
             myHost.logDeliver(senderId, nextMessage);
-            System.out.println("Also delivered: " + nextMessage + " from " + (senderId + 1));
+            // System.out.println("Also delivered: " + nextMessage + " from " + (senderId + 1));
             // remove from pending when delivered
             pending.remove(key);
             // increment next message

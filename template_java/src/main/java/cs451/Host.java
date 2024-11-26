@@ -110,7 +110,7 @@ public class Host {
                     Thread.currentThread().interrupt();
                 }
             }
-            System.out.println("Inserted new " + message.getId());
+            // System.out.println("Inserted new " + message.getId());
             logBroadcast(message.getId());
         }
     }
