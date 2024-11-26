@@ -58,6 +58,10 @@ public class PerfectLink {
     private final Map<Byte, Map<Long, Object[]>> unacknowledgedMessages = new ConcurrentHashMap<>();
     // map byte id to host
     private final Map<Byte, Host> hostMapping = new HashMap<>();
+    // pdf for sampling how many messages to resend
+    private static final double MU = -0.1;
+    private static final double SIGMA = 1.1;
+    private static final Random RANDOM = new Random();
 
     // messages list pool (avoiding constant creation and destruction with garbage collector)
     private final Queue<Queue<Message>> listPool = new LinkedList<>();
@@ -197,18 +201,24 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none already, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    Queue<Message> toSend = borrowList();
-                    toSend.addAll(messagePackages.get(h));
-                    sendMessagesBatch(toSend, h);
-                    messagePackages.get(h).clear();
-                    timeoutTasks.remove(h);
+                    synchronized (queueLock) {
+                        Queue<Message> toSend = borrowList();
+                        if (toSend == null) {
+                            toSend = new LinkedList<>();
+                        }
+                        // Queue<Message> toSend = new LinkedList<>();
+                        toSend.addAll(messagePackages.get(h));
+                        sendMessagesBatch(toSend, h);
+                        messagePackages.get(h).clear();
+                        timeoutTasks.remove(h);
+                    }
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
         // add message to unacknowledged ones
         // do it after send to avoid resending before sending
         unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                k -> new ConcurrentSkipListMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
                 new Object[]{message, System.currentTimeMillis()});
     }
 
@@ -242,11 +252,17 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    Queue<Message> toSend = borrowList();
-                    toSend.addAll(messagePackages.get(h));
-                    sendMessagesBatch(toSend, h);
-                    messagePackages.get(h).clear();
-                    timeoutTasks.remove(h);
+                    synchronized (queueLock) {
+                        Queue<Message> toSend = borrowList();
+                        if (toSend == null) {
+                            toSend = new LinkedList<>();
+                        }
+                        // Queue<Message> toSend = new LinkedList<>();
+                        toSend.addAll(messagePackages.get(h));
+                        sendMessagesBatch(toSend, h);
+                        messagePackages.get(h).clear();
+                        timeoutTasks.remove(h);
+                    }
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
@@ -315,14 +331,25 @@ public class PerfectLink {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                unacknowledgedMessages.forEach((host, messages) -> {
+                for (Map.Entry<Byte, Map<Long, Object[]>> receiver : unacknowledgedMessages.entrySet()) {
+                    Byte host = receiver.getKey();
+                    Map<Long, Object[]>  messages = receiver.getValue();
                     if (messages == null) {
-                        System.err.println("Null messages map for host: " + host);
-                        return;
+                        System.err.println("Null messages map for host: " + (receiver.getKey() + 1));
+                        continue;
                     }
-                    messages.forEach((key, messagePack) -> {
+                    int length = messages.size();
+                    int sendNum = sample(length);
+                    System.out.println("Sample " + sendNum + " out of " + length);
+
+                    for (Map.Entry<Long, Object[]> entry : messages.entrySet()) {
+                        if (sendNum == 0) {
+                            break;
+                        }
+
+                        Object[] messagePack = entry.getValue();
                         if (messagePack == null) {
-                            System.err.println("Null messagePack for key: " + key + " in host: " + host);
+                            System.err.println("Null messagePack for key: " + entry.getKey() + " in host: " + host);
                             return;
                         }
 
@@ -333,10 +360,28 @@ public class PerfectLink {
                         }
 
                         resend((Message) messagePack[0], destination);
-                    });
-                });
+
+                        sendNum--;
+                    }
+                }
             }
         }).start();
+    }
+
+    private int sample(int length) {
+        if (length <= 0) {
+            return 0;
+        }
+        // generate a log-normal sample
+        double logNormalSample = Math.exp(MU + SIGMA * RANDOM.nextGaussian());
+
+        // normalize the sample to fit in range [1, length] and scale to [0, 1)
+        double normalizedSample = logNormalSample / (logNormalSample + 1);
+        normalizedSample = Math.max(normalizedSample, 0.0);
+        int countToResend = (int) Math.ceil(normalizedSample * length);
+
+        // ensure at least 1 message is chosen
+        return Math.min(Math.max(1, countToResend), length);
     }
 
     // adaptive timeout calculation
@@ -632,7 +677,7 @@ public class PerfectLink {
 
     public static long encodeMessageKey(int messageId, int senderId) {
         // shift the senderId to the upper bits and combine with messageId
-        return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
+        return ((long) messageId << 31) | (senderId & 0x7FFFFFFF);
     }
 
 }
