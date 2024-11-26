@@ -90,12 +90,6 @@ public class URB {
             pending.put(key, new Object[]{message, (short) 0});
 
             // System.out.println("URB broadcast " + message.getId());
-
-            /*
-            for (Long k : pending.keySet()) {
-                System.out.println("Pending: " + getMessageId(k) + " from " + (getSenderId(k) + 1));
-            }
-            */
             bebBroadcastNew(message);
             return true;
         }

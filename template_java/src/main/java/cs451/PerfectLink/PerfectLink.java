@@ -36,11 +36,6 @@ public class PerfectLink {
 
     // thread pool
     private ThreadPoolExecutor threadPool;
-    /*
-    // thread for not blocking caller when sending
-    private SendThread sendThread;
-    */
-    // private ThreadPoolExecutor ackListener;
 
     // flag used to manage termination signals
     private boolean flagStopProcessing = false;
@@ -49,7 +44,7 @@ public class PerfectLink {
     // message queue for uniting messages in packages of maxNumPerPackage
     private final Map<Host, Queue<Message>> messagePackages = new ConcurrentHashMap<>();
     // maximum number of messages per package
-    private int maxNumPerPackage = 8;
+    private final int maxNumPerPackage = 8;
     // timeout for sending a package, even if it was not filled with maxNumPerPackage messages
     private static final long SEND_TIMER = 150;
     // lock for managing access to queue of messages to send
@@ -106,11 +101,6 @@ public class PerfectLink {
             e.printStackTrace();
         }
 
-        /*
-        sendThread = new SendThread();
-        sendThread.start();
-        */
-
         listenForAcks();
         startResendScheduler();
     }
@@ -128,7 +118,7 @@ public class PerfectLink {
         }
 
         // bounded queue for managing pending tasks
-        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(100);
+        BlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>(200);
         threadPool = new ThreadPoolExecutor(
                 0,  10, 5L, TimeUnit.SECONDS, taskQueue,
                 new ThreadPoolExecutor.CallerRunsPolicy());
@@ -176,11 +166,6 @@ public class PerfectLink {
 
     // send primitive for p2p perfect link
     public void send(Message message, Host host) {
-        // add message to unacknowledged ones
-        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
-                new Object[]{message, System.currentTimeMillis()});
-
         synchronized (queueLock) {
             // if there is none, create the mapping between byte id and host
             hostMapping.putIfAbsent(host.getByteId(), host);
@@ -209,7 +194,7 @@ public class PerfectLink {
                     existingTask.cancel(false);
                 }
             } else {
-                // otherwise, if there is none, start the timer
+                // otherwise, if there is none already, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
                     Queue<Message> toSend = borrowList();
                     toSend.addAll(messagePackages.get(h));
@@ -219,6 +204,11 @@ public class PerfectLink {
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
+        // add message to unacknowledged ones
+        // do it after send to avoid resending before sending
+        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
+                k -> new ConcurrentHashMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
+                new Object[]{message, System.currentTimeMillis()});
     }
 
     // resend primitive, implements the same logic as sending
@@ -275,6 +265,7 @@ public class PerfectLink {
             totalSize += 4 + message.serialize().length;
         }
 
+        // generate byte buffer of the required size to hold the package
         ByteBuffer buffer = ByteBuffer.allocate(totalSize);
 
         // serialize each message and add to buffer
@@ -313,7 +304,9 @@ public class PerfectLink {
                 try {
                     // wait before sending again, with adaptive timeout
                     long dynamicTimeout = calculateTimeout();
-                    sleep(dynamicTimeout + 100);
+                    // sleep(dynamicTimeout + 100);
+                    // hardcoded timeout since I would need to calculate a personalized timeout for every process
+                    sleep(200);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
@@ -380,28 +373,22 @@ public class PerfectLink {
                     // System.out.println("Received ack for " + messageId);
 
                     System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
-                    /*
-                    for (Byte host : unacknowledgedMessages.keySet()) {
-                        System.out.println("Sender " + (s + 1));
-                        System.out.println("Messages");
-                        for (Integer m : unacknowledgedMessages.get(s).keySet()) {
-                            System.out.println(m);
-                        }
-                    }
-                    */
 
-                    long currentTime = System.currentTimeMillis();
+                    // long currentTime = System.currentTimeMillis();
                     long key = encodeMessageKey(messageId, senderId);
 
+                    // check if the message-sender combination was still unacknowledged from the receiver
                     if (unacknowledgedMessages.get(receiver).containsKey(key)) {
                         Object[] messagePack = unacknowledgedMessages.get(receiver).get(key);
                         unacknowledgedMessages.get(receiver).remove(key);
+                        /*
                         long sendTime = (long) messagePack[1];
                         long sampleRTT = currentTime - sendTime;
 
                         // update estimated RTT and deviation
                         this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
+                        */
                     }
                 }
             } catch (IOException e) {
@@ -418,13 +405,16 @@ public class PerfectLink {
     public void receiveMessages() {
         new Thread(() -> {
             try {
+                InetAddress senderAddress;
+                int senderPort;
+                int packetLength;
                 DatagramPacket packet = new DatagramPacket(new byte[RECEIVING_BUFF_SIZE], RECEIVING_BUFF_SIZE);
 
                 while (!flagStopProcessing) {
                     try {
                         mySocket.receive(packet);
-                        InetAddress senderAddress = packet.getAddress();
-                        int senderPort = packet.getPort();
+                        senderAddress = packet.getAddress();
+                        senderPort = packet.getPort();
 
                         ByteBuffer byteBuffer = byteBufferPoolReceiving.poll();
                         if (byteBuffer == null) {
@@ -435,7 +425,7 @@ public class PerfectLink {
                             byteBuffer.clear();
                         }
 
-                        int packetLength = packet.getLength();
+                        packetLength = packet.getLength();
 
                         System.out.println("NEW PL PACKAGE, SIZE " + packetLength);
 
@@ -486,6 +476,9 @@ public class PerfectLink {
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
 
+            threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
+            // sendAck(messageId, senderId, senderAddress, senderPort);
+
             System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
@@ -529,9 +522,6 @@ public class PerfectLink {
                 }
 
             }
-
-            // threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
-            sendAck(messageId, senderId, senderAddress, senderPort);
         }
     }
 
