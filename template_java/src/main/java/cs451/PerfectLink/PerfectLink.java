@@ -185,6 +185,7 @@ public class PerfectLink {
                 Queue<Message> toSend = borrowList();
                 if (toSend == null) {
                     System.out.println("toSend is null");
+                    toSend = new LinkedList<>();
                 }
                 toSend.addAll(messagePackage);
                 sendMessagesBatch(toSend, host);
@@ -228,6 +229,9 @@ public class PerfectLink {
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
+                if (toSend == null) {
+                    toSend = new LinkedList<>();
+                }
                 toSend.addAll(messagePackage);
                 sendMessagesBatch(toSend, host);
                 messagePackage.clear();
