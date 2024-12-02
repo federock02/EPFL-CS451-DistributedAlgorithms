@@ -50,6 +50,12 @@ public class URB {
 
     // initialize the URB host with the info of all correct processes to which it will broadcast
     public void startURBBroadcaster(List<Host> otherHosts) {
+        // calculate half of initial processes, rounding up
+        N = (short) (otherHosts.size()/2);
+        // System.out.println("N = " + N);
+
+        pending = new HashMap<>();
+
         // thread for pl delivery
         plDeliveryThread = new PlDeliveryThread();
         plDeliveryThread.start();
@@ -58,18 +64,12 @@ public class URB {
         myPerfectLinkReceiver.startPerfectLinkReceiver();
         myPerfectLinkReceiver.receiveMessages();
 
-        myPerfectLinkSender = new PerfectLink(myHost, this);
-        myPerfectLinkSender.startPerfectLinkSender();
-
-        // calculate half of initial processes, rounding up
-        N = (short) (otherHosts.size()/2);
-        // System.out.println("N = " + N);
-
-        pending = new HashMap<>();
-
         // thread for broadcasting
         broadcastThread = new BebBroadcastThread(myHost, otherHosts);
         broadcastThread.start();
+
+        myPerfectLinkSender = new PerfectLink(myHost, this);
+        myPerfectLinkSender.startPerfectLinkSender();
     }
 
     public void stopProcessing() {

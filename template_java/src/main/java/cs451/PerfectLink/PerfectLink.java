@@ -457,7 +457,7 @@ public class PerfectLink {
                     byte receiver = byteBuffer.get();
                     // System.out.println("Received ack for " + messageId);
 
-                    // System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
+                    System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
 
                     // long currentTime = System.currentTimeMillis();
                     long key = encodeMessageKey(messageId, senderId);
@@ -570,7 +570,7 @@ public class PerfectLink {
             threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
             // sendAck(messageId, senderId, senderAddress, senderPort);
 
-            // System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
+            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
             // sender of the message is indicated by the senderPort
@@ -642,7 +642,7 @@ public class PerfectLink {
             ackPacket.setData(byteAckData);
             ackPacket.setAddress(senderAddress);
             ackPacket.setPort(senderPort);
-            // System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
+            System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
         synchronized (socketLock) {
