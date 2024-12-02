@@ -23,7 +23,10 @@ public class PerfectLink {
 
     // socket
     private DatagramSocket mySocket;
+    // avoid race conditions on socket, especially in shutdown hook during sending
+    private final Object socketLock = new Object();
 
+    /*
     // RTT estimation variables
     // estimation of RTT
     private double estimatedRTT = 250;
@@ -33,6 +36,7 @@ public class PerfectLink {
     private final double alpha = 0.125;
     // smoothing factor for deviation
     private final double beta = 0.25;
+    */
 
     // thread pool
     private ThreadPoolExecutor threadPool;
@@ -145,20 +149,22 @@ public class PerfectLink {
         if (threadPool != null) {
             threadPool.shutdown();
         }
-        if (mySocket != null && !mySocket.isClosed()) {
-            try {
-                if (threadPool != null && !threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
-                    threadPool.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                if (threadPool != null) {
-                    threadPool.shutdownNow();
-                }
-                Thread.currentThread().interrupt();
-            } finally {
-                if (mySocket != null && !mySocket.isClosed()) {
-                    mySocket.close();
-                    // System.out.println("Socket closed.");
+        synchronized (socketLock) {
+            if (mySocket != null && !mySocket.isClosed()) {
+                try {
+                    if (threadPool != null && !threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
+                        threadPool.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
+                    if (threadPool != null) {
+                        threadPool.shutdownNow();
+                    }
+                    Thread.currentThread().interrupt();
+                } finally {
+                    if (mySocket != null && !mySocket.isClosed()) {
+                        mySocket.close();
+                        // System.out.println("Socket closed.");
+                    }
                 }
             }
         }
@@ -308,8 +314,10 @@ public class PerfectLink {
                     InetAddress.getByName(host.getIp()), host.getPort());
 
             // send the packet through the UDP socket
-            if (!flagStopProcessing) {
-                mySocket.send(packet);
+            synchronized (socketLock) {
+                if (!flagStopProcessing && mySocket != null && !mySocket.isClosed()) {
+                    mySocket.send(packet);
+                }
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -323,7 +331,7 @@ public class PerfectLink {
             while (true) {
                 try {
                     // wait before sending again, with adaptive timeout
-                    long dynamicTimeout = calculateTimeout();
+                    // long dynamicTimeout = calculateTimeout();
                     // sleep(dynamicTimeout + 100);
                     // hardcoded timeout since I would need to calculate a personalized timeout for every process
                     sleep(200);
@@ -384,11 +392,13 @@ public class PerfectLink {
         return Math.min(Math.max(1, countToResend), length);
     }
 
+    /*
     // adaptive timeout calculation
     private long calculateTimeout() {
         long timeout = (long) (estimatedRTT + 4 * devRTT);
         return Math.min(Math.max(timeout, 100), 1000);
     }
+    */
 
     // logic for receiving acknowledgments from receivers
     public void listenForAcks() {
@@ -398,7 +408,11 @@ public class PerfectLink {
             try {
                 while (true) {
                     try {
-                        if (!flagStopProcessing) {
+                        synchronized (socketLock) {
+                            if (flagStopProcessing || mySocket.isClosed()) {
+                                // exit gracefully if the socket is closed
+                                break;
+                            }
                             mySocket.receive(packet);
                         }
                     } catch (SocketException e) {
@@ -427,10 +441,8 @@ public class PerfectLink {
                     long key = encodeMessageKey(messageId, senderId);
 
                     // check if the message-sender combination was still unacknowledged from the receiver
-                    if (unacknowledgedMessages.get(receiver).containsKey(key)) {
-                        Object[] messagePack = unacknowledgedMessages.get(receiver).get(key);
-                        unacknowledgedMessages.get(receiver).remove(key);
-                        /*
+                    // Object[] messagePack = unacknowledgedMessages.get(receiver).get(key);
+                    /*
                         long sendTime = (long) messagePack[1];
                         long sampleRTT = currentTime - sendTime;
 
@@ -438,6 +450,10 @@ public class PerfectLink {
                         this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
                         this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
                         */
+                    // safely remove the acknowledged message
+                    Map<Long, Object[]> receiverMessages = unacknowledgedMessages.get(receiver);
+                    if (receiverMessages != null) {
+                        receiverMessages.remove(key);
                     }
                 }
             } catch (IOException e) {
@@ -461,7 +477,13 @@ public class PerfectLink {
 
                 while (!flagStopProcessing) {
                     try {
-                        mySocket.receive(packet);
+                        synchronized (socketLock) {
+                            if (flagStopProcessing || mySocket.isClosed()) {
+                                // Exit gracefully if the socket is closed
+                                break;
+                            }
+                            mySocket.receive(packet);
+                        }
                         senderAddress = packet.getAddress();
                         senderPort = packet.getPort();
 
@@ -603,11 +625,13 @@ public class PerfectLink {
             // System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
-        if (!flagStopProcessing) {
-            try {
-                mySocket.send(ackPacket);
-            } catch (IOException e) {
-                e.printStackTrace();
+        synchronized (socketLock) {
+            if (!flagStopProcessing && !mySocket.isClosed()) {
+                try {
+                    mySocket.send(ackPacket);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
 
