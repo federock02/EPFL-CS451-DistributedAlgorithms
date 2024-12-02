@@ -203,6 +203,9 @@ public class PerfectLink {
                 messagePackages.put(host, messagePackage);
             }
             // add the message to the queue
+            if (message == null) {
+                System.err.println("Adding null message");
+            }
             messagePackage.add(message);
             // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
