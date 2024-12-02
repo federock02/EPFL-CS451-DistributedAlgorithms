@@ -241,6 +241,12 @@ public class URB {
                                 // can remove from pending because it checks if message was already delivered when it gets one
                                 pending.remove(key);
                             }
+                            else {
+                                if (deliveredLast != null) {
+                                    System.out.println("Would like to deliver " + messageId + " from " + (senderId + 1) +
+                                            " but missing " + (deliveredLast + 1));
+                                }
+                            }
                         }
                     }
                 }
