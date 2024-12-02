@@ -300,6 +300,12 @@ public class PerfectLink {
         // total size of the package
         int totalSize = 0;
         for (Message message : messagePackage) {
+            if (message == null) {
+                System.err.println("Message null");
+            }
+            if (message.serialize() == null) {
+                System.err.println("Message serialize null " + message.getId());
+            }
             totalSize += 4 + message.serialize().length;
         }
 
