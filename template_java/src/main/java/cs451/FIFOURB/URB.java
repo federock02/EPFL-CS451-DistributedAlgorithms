@@ -74,10 +74,18 @@ public class URB {
 
     public void stopProcessing() {
         flagStopProcessing = true;
-        broadcastThread.interrupt();
-        plDeliveryThread.interrupt();
-        myPerfectLinkReceiver.stopProcessing();
-        myPerfectLinkSender.stopProcessing();
+        if (broadcastThread != null) {
+            broadcastThread.interrupt();
+        }
+        if (plDeliveryThread != null) {
+            plDeliveryThread.interrupt();
+        }
+        if (myPerfectLinkReceiver != null) {
+            myPerfectLinkReceiver.stopProcessing();
+        }
+        if (myPerfectLinkSender != null) {
+            myPerfectLinkSender.stopProcessing();
+        }
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -103,14 +111,14 @@ public class URB {
     }
 
     private void bebBroadcastNew(Message message) {
-        if (!flagStopProcessing) {
+        if (!flagStopProcessing && broadcastThread != null) {
             // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
             broadcastThread.enqueueNewMessage(message);
         }
     }
 
     private void bebBroadcastForward(Message message) {
-        if (!flagStopProcessing) {
+        if (!flagStopProcessing && broadcastThread != null) {
             broadcastThread.enqueueRelayMessage(message);
         }
     }
@@ -241,7 +249,9 @@ public class URB {
     }
 
     public void plDeliver(Message message) {
-        plDeliveryThread.plDeliver(message);
+        if (plDeliveryThread != null) {
+            plDeliveryThread.plDeliver(message);
+        }
     }
 
     private void fifoDeliver(int messageId, byte senderId) {
