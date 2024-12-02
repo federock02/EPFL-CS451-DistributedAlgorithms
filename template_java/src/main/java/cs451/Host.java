@@ -1,13 +1,9 @@
 package cs451;
 
 import cs451.FIFOURB.URB;
-import cs451.PerfectLink.PerfectLink;
 
-import java.io.*;
 import java.net.*;
 import java.util.*;
-import java.util.concurrent.*;
-import java.nio.ByteBuffer;
 
 // single process in the system
 public class Host {
@@ -19,7 +15,6 @@ public class Host {
     private URB broadcaster;
 
     private static final String IP_START_REGEX = "/";
-    private static final int MAX_NUM_MESSAGES_PER_PACKAGE = 8;
 
     private boolean flagStopProcessing = false;
 
@@ -102,15 +97,15 @@ public class Host {
     // -----------------------------------------------------------------------------------------------------------------
 
     public void broadcastMessage(Message message) {
+        int i = 10;
         if (!flagStopProcessing) {
-            while (!broadcaster.urbBroadcast(message)) {
+            while (!broadcaster.urbBroadcast(message) || i == 0) {
                 try {
                     Thread.sleep(20);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
-            // System.out.println("Inserted new " + message.getId());
             logBroadcast(message.getId());
         }
     }
@@ -133,7 +128,7 @@ public class Host {
     }
 
     // -----------------------------------------------------------------------------------------------------------------
-    // LOGGING
+    // UTILS
     // -----------------------------------------------------------------------------------------------------------------
 
     @Override

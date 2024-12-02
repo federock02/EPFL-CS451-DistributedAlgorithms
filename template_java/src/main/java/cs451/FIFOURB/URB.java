@@ -41,6 +41,8 @@ public class URB {
 
     private static final int MAX_PENDING_MESSAGES = 100;
 
+    int i = 10;
+
     // create a URB host with the attribute from the host above
     public URB(Host myHost) {
         this.myHost = myHost;
@@ -84,16 +86,18 @@ public class URB {
 
     // URB broadcast primitive
     public boolean urbBroadcast(Message message) {
-        if (!flagStopProcessing && pending.size() < MAX_PENDING_MESSAGES) {
+        if (!flagStopProcessing && (pending.size() < MAX_PENDING_MESSAGES || i == 0)) {
             long key = encodeMessageKey(message.getId(), message.getByteSenderId());
             // add to pending, with 0 acks
             pending.put(key, new Object[]{message, (short) 0});
+            i = 10;
 
             // System.out.println("URB broadcast " + message.getId());
             bebBroadcastNew(message);
             return true;
         }
         else {
+            i--;
             return false;
         }
     }

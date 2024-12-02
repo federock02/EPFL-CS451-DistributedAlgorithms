@@ -73,16 +73,10 @@ public class Main {
         // giving the host the output file path
         parser.hosts().get(parser.myId() - 1).setOutputPath(parser.output());
 
-        // list of messages that will need to be sent, thread safe
-        ConcurrentLinkedQueue<Message> messages = new ConcurrentLinkedQueue<>();
-        Host receiverHost = null;
-        boolean flagReceiver = false;
-
         // getting config file path
         String configFile = parser.config();
 
         int numMessages = 0;
-        int receiverId;
 
         // setting up the sending phase or the receiving phase
         try(BufferedReader br = new BufferedReader(new FileReader(configFile))) {
@@ -121,10 +115,10 @@ public class Main {
 
         threadPool.shutdown();
 
-        // After a process finishes broadcasting,
+        // after a process finishes broadcasting,
         // it waits forever for the delivery of messages.
         while (true) {
-            // Sleep for 1 hour
+            // sleep for 1 hour
             Thread.sleep(60 * 60 * 1000);
         }
     }
