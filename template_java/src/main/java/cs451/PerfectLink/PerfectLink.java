@@ -203,9 +203,6 @@ public class PerfectLink {
                 messagePackages.put(host, messagePackage);
             }
             // add the message to the queue
-            if (message == null) {
-                System.err.println("Adding null message");
-            }
             messagePackage.add(message);
             // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
@@ -226,15 +223,17 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none already, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    Queue<Message> toSend = borrowList();
-                    if (toSend == null) {
-                        toSend = new LinkedList<>();
+                    synchronized (queueLock) {
+                        Queue<Message> toSend = borrowList();
+                        if (toSend == null) {
+                            toSend = new LinkedList<>();
+                        }
+                        // Queue<Message> toSend = new LinkedList<>();
+                        toSend.addAll(messagePackages.get(h));
+                        sendMessagesBatch(toSend, h);
+                        messagePackages.get(h).clear();
+                        timeoutTasks.remove(h);
                     }
-                    // Queue<Message> toSend = new LinkedList<>();
-                    toSend.addAll(messagePackages.get(h));
-                    sendMessagesBatch(toSend, h);
-                    messagePackages.get(h).clear();
-                    timeoutTasks.remove(h);
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
@@ -275,15 +274,17 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    Queue<Message> toSend = borrowList();
-                    if (toSend == null) {
-                        toSend = new LinkedList<>();
+                    synchronized (queueLock) {
+                        Queue<Message> toSend = borrowList();
+                        if (toSend == null) {
+                            toSend = new LinkedList<>();
+                        }
+                        // Queue<Message> toSend = new LinkedList<>();
+                        toSend.addAll(messagePackages.get(h));
+                        sendMessagesBatch(toSend, h);
+                        messagePackages.get(h).clear();
+                        timeoutTasks.remove(h);
                     }
-                    // Queue<Message> toSend = new LinkedList<>();
-                    toSend.addAll(messagePackages.get(h));
-                    sendMessagesBatch(toSend, h);
-                    messagePackages.get(h).clear();
-                    timeoutTasks.remove(h);
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
