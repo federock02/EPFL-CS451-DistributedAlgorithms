@@ -68,7 +68,7 @@ public class PerfectLink {
     private static final Random RANDOM = new Random();
 
     // messages list pool (avoiding constant creation and destruction with garbage collector)
-    private final Queue<Queue<Message>> listPool = new LinkedList<>();
+    private final Queue<Queue<Message>> listPool = new ConcurrentLinkedQueue<>();
 
     // structure for already delivered messages in receiving phase
     // notice that it uses the sender ports as keys, and not the senderId, since messages are relayed
@@ -165,7 +165,7 @@ public class PerfectLink {
             threadPool.shutdown();
         }
         synchronized (socketLock) {
-            System.out.println("Lock in stop processing");
+            // System.out.println("Lock in stop processing");
             if (mySocket != null && !mySocket.isClosed()) {
                 try {
                     if (threadPool != null && !threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
@@ -199,19 +199,19 @@ public class PerfectLink {
             // Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
             Queue<Message> messagePackage = messagePackages.get(host);
             if (messagePackage == null) {
-                messagePackage = new LinkedList<>();
+                messagePackage = new ConcurrentLinkedQueue<>();
                 messagePackages.put(host, messagePackage);
             }
             // add the message to the queue
             messagePackage.add(message);
-            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
                 Queue<Message> toSend = borrowList();
                 if (toSend == null) {
                     // System.out.println("toSend is null");
-                    toSend = new LinkedList<>();
+                    toSend = new ConcurrentLinkedQueue<>();
                 }
                 toSend.addAll(messagePackage);
                 sendMessagesBatch(toSend, host);
@@ -256,7 +256,7 @@ public class PerfectLink {
             }
             // add the message to the queue
             messagePackage.add(message);
-            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {

@@ -92,7 +92,7 @@ public class URB {
             pending.put(key, new Object[]{message, (short) 0});
             i = 10;
 
-            // System.out.println("URB broadcast " + message.getId());
+            System.out.println("URB broadcast " + message.getId());
             bebBroadcastNew(message);
             return true;
         }
