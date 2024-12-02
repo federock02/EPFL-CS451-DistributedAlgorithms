@@ -89,6 +89,21 @@ public class PerfectLink {
         this.myId = (byte) (myHost.getId() - 1);
         this.myIp = myHost.getIp();
         this.myPort = myHost.getPort();
+
+        /*
+        new Thread(() -> {
+            while (true) {
+                for (Thread t : Thread.getAllStackTraces().keySet()) {
+                    System.out.println(t.getName() + " - " + t.getState());
+                }
+                try {
+                    Thread.sleep(1000); // Adjust as necessary
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }).start();
+        */
     }
 
     // constructor for perfect link under URB broadcaster
@@ -150,6 +165,7 @@ public class PerfectLink {
             threadPool.shutdown();
         }
         synchronized (socketLock) {
+            System.out.println("Lock in stop processing");
             if (mySocket != null && !mySocket.isClosed()) {
                 try {
                     if (threadPool != null && !threadPool.awaitTermination(1000, TimeUnit.MILLISECONDS)) {
@@ -207,17 +223,15 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none already, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    synchronized (queueLock) {
-                        Queue<Message> toSend = borrowList();
-                        if (toSend == null) {
-                            toSend = new LinkedList<>();
-                        }
-                        // Queue<Message> toSend = new LinkedList<>();
-                        toSend.addAll(messagePackages.get(h));
-                        sendMessagesBatch(toSend, h);
-                        messagePackages.get(h).clear();
-                        timeoutTasks.remove(h);
+                    Queue<Message> toSend = borrowList();
+                    if (toSend == null) {
+                        toSend = new LinkedList<>();
                     }
+                    // Queue<Message> toSend = new LinkedList<>();
+                    toSend.addAll(messagePackages.get(h));
+                    sendMessagesBatch(toSend, h);
+                    messagePackages.get(h).clear();
+                    timeoutTasks.remove(h);
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
@@ -258,17 +272,15 @@ public class PerfectLink {
             } else {
                 // otherwise, if there is none, start the timer
                 timeoutTasks.computeIfAbsent(host, h -> scheduler.schedule(() -> {
-                    synchronized (queueLock) {
-                        Queue<Message> toSend = borrowList();
-                        if (toSend == null) {
-                            toSend = new LinkedList<>();
-                        }
-                        // Queue<Message> toSend = new LinkedList<>();
-                        toSend.addAll(messagePackages.get(h));
-                        sendMessagesBatch(toSend, h);
-                        messagePackages.get(h).clear();
-                        timeoutTasks.remove(h);
+                    Queue<Message> toSend = borrowList();
+                    if (toSend == null) {
+                        toSend = new LinkedList<>();
                     }
+                    // Queue<Message> toSend = new LinkedList<>();
+                    toSend.addAll(messagePackages.get(h));
+                    sendMessagesBatch(toSend, h);
+                    messagePackages.get(h).clear();
+                    timeoutTasks.remove(h);
                 }, SEND_TIMER, TimeUnit.MILLISECONDS));
             }
         }
@@ -315,7 +327,9 @@ public class PerfectLink {
 
             // send the packet through the UDP socket
             synchronized (socketLock) {
+                // System.out.println("Lock in send message batch");
                 if (!flagStopProcessing && mySocket != null && !mySocket.isClosed()) {
+                    // System.out.println("Sending message batch");
                     mySocket.send(packet);
                 }
             }
@@ -408,13 +422,11 @@ public class PerfectLink {
             try {
                 while (true) {
                     try {
-                        synchronized (socketLock) {
-                            if (flagStopProcessing || mySocket.isClosed()) {
-                                // exit gracefully if the socket is closed
-                                break;
-                            }
-                            mySocket.receive(packet);
+                        if (flagStopProcessing || mySocket.isClosed()) {
+                            // exit gracefully if the socket is closed
+                            break;
                         }
+                        mySocket.receive(packet);
                     } catch (SocketException e) {
                         if (flagStopProcessing) {
                             // socket is closed during shutdown, exit gracefully
@@ -477,13 +489,11 @@ public class PerfectLink {
 
                 while (!flagStopProcessing) {
                     try {
-                        synchronized (socketLock) {
-                            if (flagStopProcessing || mySocket.isClosed()) {
-                                // Exit gracefully if the socket is closed
-                                break;
-                            }
-                            mySocket.receive(packet);
+                        if (flagStopProcessing || mySocket.isClosed()) {
+                            // Exit gracefully if the socket is closed
+                            break;
                         }
+                        mySocket.receive(packet);
                         senderAddress = packet.getAddress();
                         senderPort = packet.getPort();
 
@@ -626,6 +636,8 @@ public class PerfectLink {
         }
 
         synchronized (socketLock) {
+
+            // System.out.println("Lock in send ack");
             if (!flagStopProcessing && !mySocket.isClosed()) {
                 try {
                     mySocket.send(ackPacket);
