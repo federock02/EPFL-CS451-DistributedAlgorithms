@@ -89,21 +89,6 @@ public class PerfectLink {
         this.myId = (byte) (myHost.getId() - 1);
         this.myIp = myHost.getIp();
         this.myPort = myHost.getPort();
-
-        /*
-        new Thread(() -> {
-            while (true) {
-                for (Thread t : Thread.getAllStackTraces().keySet()) {
-                    System.out.println(t.getName() + " - " + t.getState());
-                }
-                try {
-                    Thread.sleep(1000); // Adjust as necessary
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }).start();
-        */
     }
 
     // constructor for perfect link under URB broadcaster
@@ -204,7 +189,7 @@ public class PerfectLink {
             }
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -256,7 +241,7 @@ public class PerfectLink {
             }
             // add the message to the queue
             messagePackage.add(message);
-            System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
+            // System.out.println("plResending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
 
             // check if queue for this host har reached the size
             if (messagePackage.size() >= maxNumPerPackage) {
@@ -304,12 +289,6 @@ public class PerfectLink {
         // total size of the package
         int totalSize = 0;
         for (Message message : messagePackage) {
-            if (message == null) {
-                System.err.println("Message null");
-            }
-            if (message.serialize() == null) {
-                System.err.println("Message serialize null " + message.getId());
-            }
             totalSize += 4 + message.serialize().length;
         }
 
@@ -457,7 +436,7 @@ public class PerfectLink {
                     byte receiver = byteBuffer.get();
                     // System.out.println("Received ack for " + messageId);
 
-                    System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
+                    // System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
 
                     // long currentTime = System.currentTimeMillis();
                     long key = encodeMessageKey(messageId, senderId);
@@ -570,7 +549,7 @@ public class PerfectLink {
             threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
             // sendAck(messageId, senderId, senderAddress, senderPort);
 
-            System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
+            // System.out.println("PLReceived message " + messageId + " from " + (senderId + 1) + " sent by " + senderPort);
 
             // check if the message is already delivered from sender
             // sender of the message is indicated by the senderPort
@@ -642,7 +621,7 @@ public class PerfectLink {
             ackPacket.setData(byteAckData);
             ackPacket.setAddress(senderAddress);
             ackPacket.setPort(senderPort);
-            System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
+            // System.out.println("Acking " + messageId + " from " + (senderId + 1) + " to " + senderAddress + ":" + senderPort);
         }
 
         synchronized (socketLock) {

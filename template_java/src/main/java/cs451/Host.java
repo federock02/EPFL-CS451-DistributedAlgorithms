@@ -97,9 +97,8 @@ public class Host {
     // -----------------------------------------------------------------------------------------------------------------
 
     public void broadcastMessage(Message message) {
-        int i = 10;
         if (!flagStopProcessing) {
-            while (!broadcaster.urbBroadcast(message) || i == 0) {
+            while (!broadcaster.urbBroadcast(message)) {
                 try {
                     Thread.sleep(20);
                 } catch (InterruptedException e) {
