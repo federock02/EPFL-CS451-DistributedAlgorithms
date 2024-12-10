@@ -87,12 +87,9 @@ public class Host {
         logger = new Logger(outputPath);
     }
 
-    public void startURBBroadcaster(List<Host> hosts) {
-        broadcaster = new URB(this);
-        broadcaster.startURBBroadcaster(hosts);
-    }
+    public void startLatticeAgreement(List<Host> hosts) {
 
-    public void start
+    }
 
     // -----------------------------------------------------------------------------------------------------------------
     // SENDING

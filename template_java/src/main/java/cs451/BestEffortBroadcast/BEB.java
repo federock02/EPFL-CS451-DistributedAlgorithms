@@ -4,19 +4,8 @@ import cs451.Host;
 import cs451.Message;
 import cs451.PerfectLink.PerfectLink;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-
-import cs451.Host;
-import cs451.Message;
-import cs451.PerfectLink.PerfectLink;
-
-import java.util.*;
-import java.util.concurrent.*;
 
 public class BEB {
     // host parameters
@@ -27,9 +16,6 @@ public class BEB {
 
     // my perfect link sender
     private PerfectLink myPerfectLinkSender;
-
-    // lock for delivery
-    private final Object deliveryLock = new Object();
 
     // thread for broadcasting
     private BebBroadcastThread broadcastThread;
@@ -124,13 +110,5 @@ public class BEB {
     // plDelvery calls bebDelivery
     public void bebDeliver(Message message) {
 
-    }
-
-    // -----------------------------------------------------------------------------------------------------------------
-    // UTILS
-    // -----------------------------------------------------------------------------------------------------------------
-    public static long encodeMessageKey(int messageId, int senderId) {
-        // shift the senderId to the upper bits and combine with messageId
-        return ((long) senderId << 31) | (messageId & 0x7FFFFFFF);
     }
 }
