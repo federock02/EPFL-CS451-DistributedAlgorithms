@@ -1,6 +1,6 @@
 package cs451.PerfectLink;
 
-import cs451.FIFOURB.URB;
+import cs451.BestEffortBroadcast.BEB;
 import cs451.Host;
 import cs451.Message;
 
@@ -19,7 +19,7 @@ public class PerfectLink {
     private final int myPort;
 
     // URB broadcaster
-    private URB broadcaster;
+    private BEB broadcaster;
 
     // socket
     private DatagramSocket mySocket;
@@ -92,7 +92,7 @@ public class PerfectLink {
     }
 
     // constructor for perfect link under URB broadcaster
-    public PerfectLink(Host myHost, URB broadcaster) {
+    public PerfectLink(Host myHost, BEB broadcaster) {
         this(myHost);
         this.broadcaster = broadcaster;
     }
@@ -563,7 +563,7 @@ public class PerfectLink {
                         i = addMessage(deliveredMessages, messageId);
                         if (i != -1) {
                             // message wasn't already delivered
-                            broadcaster.plDeliver(message);
+                            broadcaster.bebDeliver(message);
                         }
                     } else {
                         // never received from sender from this port, add to delivered and add sender
@@ -574,7 +574,7 @@ public class PerfectLink {
                         deliveredMessages.add(new int[]{messageId, messageId});
                         deliveredFromSender.put(senderId, deliveredMessages);
 
-                        broadcaster.plDeliver(message);
+                        broadcaster.bebDeliver(message);
                     }
                 }
                 else {
@@ -588,7 +588,7 @@ public class PerfectLink {
                     deliveredFromSender.put(senderId, deliveredMessages);
                     deliveredMap.put((short) senderPort, deliveredFromSender);
 
-                    broadcaster.plDeliver(message);
+                    broadcaster.bebDeliver(message);
                 }
 
             }
