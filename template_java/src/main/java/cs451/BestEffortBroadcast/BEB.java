@@ -1,6 +1,7 @@
 package cs451.BestEffortBroadcast;
 
 import cs451.Host;
+import cs451.LatticeAgreement.LatticeAgreement;
 import cs451.Message;
 import cs451.PerfectLink.PerfectLink;
 
@@ -10,6 +11,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class BEB {
     // host parameters
     private final Host myHost;
+    private final LatticeAgreement caller;
 
     // my perfect link receiver
     private PerfectLink myPerfectLinkReceiver;
@@ -24,8 +26,9 @@ public class BEB {
     private boolean flagStopProcessing = false;
 
     // create a BEB host with the attribute from the host above
-    public BEB(Host myHost) {
+    public BEB(LatticeAgreement caller, Host myHost) {
         this.myHost = myHost;
+        this.caller = caller;
     }
 
     // initialize the URB host with the info of all correct processes to which it will broadcast
@@ -63,7 +66,7 @@ public class BEB {
     // -----------------------------------------------------------------------------------------------------------------
 
     // broadcasting new messages
-    private void bebBroadcast(Message message) {
+    public void bebBroadcast(Message message) {
         if (!flagStopProcessing && broadcastThread != null) {
             // System.out.println("bebBroadcast " + message.getId() + " from " + message.getSenderId());
             broadcastThread.enqueueNewMessage(message);
@@ -106,9 +109,8 @@ public class BEB {
     // -----------------------------------------------------------------------------------------------------------------
     // DELIVERING
     // -----------------------------------------------------------------------------------------------------------------
-
     // plDelvery calls bebDelivery
     public void bebDeliver(Message message) {
-
+        this.caller.deliverMessage(message);
     }
 }
