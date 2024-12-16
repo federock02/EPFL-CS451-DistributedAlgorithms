@@ -1,6 +1,7 @@
 package cs451;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public class Message {
     private final int id;
@@ -71,6 +72,8 @@ public class Message {
         buffer.put(this.senderId);
         buffer.put(payload);
 
+        // System.out.println("Message serialize payload: " + Arrays.toString(payload));
+        // System.out.println("Message serialize message: " + Arrays.toString(buffer.array()));
         return buffer.array();
     }
 
@@ -81,7 +84,10 @@ public class Message {
         // extract id and senderId
         int id = buffer.getInt();
         byte senderId = buffer.get();
-        byte[] payload = buffer.array();
+        byte[] payload = new byte[buffer.remaining()];
+        buffer.get(payload);
+
+        // System.out.println("Message deserialize: " + Arrays.toString(payload));
 
         return new Message(id, payload, senderId + 1);
     }

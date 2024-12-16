@@ -1,6 +1,9 @@
 package cs451;
 
 import java.io.*;
+import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.Queue;
 import java.util.concurrent.*;
 
 public class Main {
@@ -73,11 +76,37 @@ public class Main {
         // getting config file path
         String configFile = parser.config();
 
-        int numMessages = 0;
+        int p = 0;
+        int vs = 0;
+        int ds = 0;
+
+        Queue<Integer[]> proposals = null;
 
         // setting up the sending phase or the receiving phase
         try(BufferedReader br = new BufferedReader(new FileReader(configFile))) {
-            int lineNum = 1;
+            String firstLine = br.readLine();
+            if (firstLine != null && !firstLine.isBlank()) {
+                String[] splits = firstLine.split(" ");
+
+                if (splits.length != 3) {
+                    System.err.println("Problem with the line 1 in the configuration file!");
+                }
+
+                p = Integer.parseInt(splits[0]);
+                System.out.println("p = " + p);
+                proposals = new LinkedList<>();
+
+                vs = Integer.parseInt(splits[1]);
+                System.out.println("vs = " + vs);
+                ds = Integer.parseInt(splits[2]);
+                System.out.println("ds = " + ds);
+            }
+            else {
+                System.err.println("Problem with the line 1 in the configuration file!");
+                return;
+            }
+
+            int lineNum = 2;
 
             // read all lines in the config file
             for(String line; (line = br.readLine()) != null; lineNum++) {
@@ -85,27 +114,35 @@ public class Main {
                     continue;
                 }
 
-                // dividing number of messages to send and who to send them
                 String[] splits = line.split(" ");
-                if (splits.length != 1) {
-                    System.err.println("Problem with the line " + lineNum + " in the configuration file!");
+                if (splits.length > vs) {
+                    System.err.println("Too many values proposed in line " + lineNum + " in the configuration file!");
+                    continue;
                 }
-                numMessages = Integer.parseInt(splits[0]);
+
+                // creating a new proposal of appropriate length
+                Integer[] proposal = new Integer[splits.length];
+
+                for (int i = 0; i < splits.length; i++) {
+                    proposal[i] = Integer.parseInt(splits[i]);
+                }
+                proposals.add(proposal);
             }
         } catch (IOException e) {
             System.err.println("Problem with the configuration file!");
         }
 
 
-        System.out.println("Broadcasting and delivering messages...\n");
+        System.out.println("Proposing...\n");
 
-        myHost.startURBBroadcaster(parser.hosts());
+        myHost.startLatticeAgreement(parser.hosts(), p, vs, ds);
 
-        // initialize all the message objects that need to be sent
-        int myId = parser.myId();
-        for (int i = 1; i <= numMessages; i++) {
-            myHost.broadcastMessage(new Message(i, i, myId));
-            // System.out.println("Added new message for host " + myId);
+        if (proposals == null) {
+            return;
+        }
+
+        for (Integer[] proposal : proposals) {
+            myHost.propose(proposal);
         }
 
         // after a process finishes broadcasting,

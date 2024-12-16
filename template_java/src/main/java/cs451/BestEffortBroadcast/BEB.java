@@ -13,6 +13,8 @@ public class BEB {
     private final Host myHost;
     private final LatticeAgreement caller;
 
+    private List<Host> otherHosts;
+
     // my perfect link receiver
     private PerfectLink myPerfectLinkReceiver;
 
@@ -33,6 +35,7 @@ public class BEB {
 
     // initialize the URB host with the info of all correct processes to which it will broadcast
     public void startBEBBroadcaster(List<Host> otherHosts) {
+        this.otherHosts = otherHosts;
         // PL receiver
         myPerfectLinkReceiver = new PerfectLink(myHost, this);
         myPerfectLinkReceiver.startPerfectLinkReceiver();
@@ -58,6 +61,18 @@ public class BEB {
         }
         if (myPerfectLinkSender != null) {
             myPerfectLinkSender.stopProcessing();
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // SENDING THROUGH PL
+    // -----------------------------------------------------------------------------------------------------------------
+
+    public void plSendTo(Message message, int senderId) {
+        for (Host host : this.otherHosts) {
+            if (host.getId() == senderId) {
+                myPerfectLinkSender.send(message, host);
+            }
         }
     }
 

@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class Logger {
@@ -28,6 +29,23 @@ public class Logger {
             this.writer = new BufferedWriter(new FileWriter(outputPath, true));
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void logDecide(Set<Integer> values) {
+        if (values == null || values.isEmpty()) {
+            return;
+        }
+
+        // join the integers with a space separator
+        String logEntry = String.join(" ", values.stream().map(String::valueOf).toArray(String[]::new));
+
+        // Add the log entry to the buffer
+        logBuffer.add(logEntry);
+
+        // Write to file if the buffer reaches its limit
+        if (logBuffer.size() >= BUFFER_SIZE) {
+            logWriteToFile();
         }
     }
 

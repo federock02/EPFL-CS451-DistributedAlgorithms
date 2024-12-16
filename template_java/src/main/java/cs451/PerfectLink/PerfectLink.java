@@ -48,7 +48,7 @@ public class PerfectLink {
     // message queue for uniting messages in packages of maxNumPerPackage
     private final Map<Host, Queue<Message>> messagePackages = new ConcurrentHashMap<>();
     // maximum number of messages per package
-    private final int maxNumPerPackage = 8;
+    private final int maxNumPerPackage = 2;
     // timeout for sending a package, even if it was not filled with maxNumPerPackage messages
     private static final long SEND_TIMER = 150;
     // lock for managing access to queue of messages to send
@@ -308,6 +308,7 @@ public class PerfectLink {
         }
         returnList(messagePackage);
         byte[] byteData = buffer.array();
+        // System.out.println("PL sending: " + Arrays.toString(byteData));
 
         try {
             // create packet with data, size of data  and receiver info
@@ -533,7 +534,7 @@ public class PerfectLink {
             int messageSize = byteBuffer.getInt();
 
             if (byteBuffer.position() + messageSize > packetLength) {
-                // System.err.println("Incomplete message");
+                System.err.println("Incomplete message");
                 break;
             }
 
@@ -545,6 +546,7 @@ public class PerfectLink {
             Message message = Message.deserialize(messageBytes);
             int messageId = message.getId();
             byte senderId = message.getByteSenderId();
+            // System.out.println("PL payload received: " + Arrays.toString(message.getPayload()));
 
             threadPool.submit(() -> sendAck(messageId, senderId, senderAddress, senderPort));
             // sendAck(messageId, senderId, senderAddress, senderPort);

@@ -1,7 +1,9 @@
 package cs451;
 
-import cs451.FIFOURB.URB;
+//import cs451.FIFOURB.URB;
+import cs451.LatticeAgreement.LatticeAgreement;
 
+import javax.print.attribute.IntegerSyntax;
 import java.net.*;
 import java.util.*;
 
@@ -12,7 +14,9 @@ public class Host {
     private String ip;
     private int port = -1;
 
-    private URB broadcaster;
+    private Set<Integer> proposalSet;
+
+    private LatticeAgreement latticeAgreement;
 
     private static final String IP_START_REGEX = "/";
 
@@ -76,7 +80,7 @@ public class Host {
 
     public void stopProcessing() {
         flagStopProcessing = true;
-        broadcaster.stopProcessing();
+        latticeAgreement.stopProcessing();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -87,37 +91,27 @@ public class Host {
         logger = new Logger(outputPath);
     }
 
-    public void startLatticeAgreement(List<Host> hosts) {
-
+    public void startLatticeAgreement(List<Host> hosts, int p, int vs, int ds) {
+        this.latticeAgreement = new LatticeAgreement(this);
+        this.latticeAgreement.startLatticeAgreement(hosts, p, vs, ds);
     }
 
     // -----------------------------------------------------------------------------------------------------------------
     // SENDING
     // -----------------------------------------------------------------------------------------------------------------
 
-    public void broadcastMessage(Message message) {
-        if (!flagStopProcessing) {
-            while (!broadcaster.urbBroadcast(message)) {
-                try {
-                    Thread.sleep(20);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            logBroadcast(message.getId());
-        }
+    public void propose(Integer[] proposal) {
+        proposalSet = new HashSet<>();
+        proposalSet.addAll(List.of(proposal));
+        this.latticeAgreement.propose(proposalSet);
     }
 
     // -----------------------------------------------------------------------------------------------------------------
     // LOGGING
     // -----------------------------------------------------------------------------------------------------------------
 
-    public void logDeliver(byte senderId, int messageId) {
-        logger.logDeliver(senderId, messageId);
-    }
-
-    private void logBroadcast(int messageId) {
-        logger.logBroadcast(messageId);
+    public void logDecide(Set<Integer> values) {
+        logger.logDecide(values);
     }
 
     public void flushLog() {
