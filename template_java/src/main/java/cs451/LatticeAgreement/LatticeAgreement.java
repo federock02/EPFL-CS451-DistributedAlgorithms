@@ -29,7 +29,11 @@ public class LatticeAgreement {
     private Map<Integer, LatticeAgreementInstance> instances;
 
     // decided instances
-    private Queue<Integer> decided;
+    private Map<Integer, Set<Integer>> decided;
+    // last decided instance for keeping them in order
+    private int lastDecided;
+    // waiting to be decided
+    private Queue<Integer> toDecide;
 
     int messageId = 1;
 
@@ -49,12 +53,15 @@ public class LatticeAgreement {
         this.vs = vs;
         this.ds = ds;
         this.instanceId = 0;
+        this.lastDecided = 0;
+
+        this.toDecide = new LinkedList<>();
 
         deliveryThread = new messageDeliveryThread();
         deliveryThread.start();
 
         this.instances = new ConcurrentHashMap<>();
-        this.decided = new ConcurrentLinkedQueue<>();
+        this.decided = new ConcurrentHashMap<>();
 
         broadcaster = new BEB(this, this.myHost);
         broadcaster.startBEBBroadcaster(hosts);
@@ -62,7 +69,7 @@ public class LatticeAgreement {
         this.n = (byte) (hosts.size() - 1);
 
         this.f = (byte) ((hosts.size() - 1) / 2);
-        System.out.println("f = " + f);
+        //System.out.println("f = " + f);
     }
 
     public void stopProcessing() {
@@ -109,12 +116,15 @@ public class LatticeAgreement {
     }
 
     private void ack(int instance, byte proposalNumber){
-        System.out.println("Acked instance " + instance + " proposalNumber " + proposalNumber);
+        if (decided.containsKey(instance)) {
+            return;
+        }
+        // System.out.println("Acked instance " + instance + " proposalNumber " + proposalNumber);
         LatticeAgreementInstance inst = instances.get(instance);
         if (proposalNumber == inst.activeProposal) {
             inst.acks += 1;
 
-            System.out.println("Acks: " + inst.acks);
+            // System.out.println("Acks: " + inst.acks);
 
             // check if enough acks received
             if (inst.active && inst.acks >= f + 1) {
@@ -131,19 +141,24 @@ public class LatticeAgreement {
     }
 
     private void nack(int instance, byte proposalNumber, Set<Integer> proposal) {
-        System.out.println("Nacked instance " + instance + " proposalNumber " + proposalNumber);
+        if (decided.containsKey(instance)) {
+            return;
+        }
+        // System.out.println("Nacked instance " + instance + " proposalNumber " + proposalNumber);
         LatticeAgreementInstance inst = instances.get(instance);
         if (proposalNumber == inst.activeProposal) {
             // union of proposals
             inst.proposedValues.addAll(proposal);
             inst.nacks += 1;
-            System.out.println("Acks: " + inst.acks);
+            // System.out.println("Acks: " + inst.acks);
             System.out.println("Nacks: " + inst.nacks);
 
+            /*
             System.out.println("Updated proposal:");
             for (Integer value : inst.proposedValues) {
                 System.out.println(value);
             }
+            */
 
             // check if enough nacks + acks received
             if (inst.active && inst.nacks + inst.acks >= f + 1) {
@@ -167,20 +182,31 @@ public class LatticeAgreement {
                 instance, inst.activeProposal, inst.proposedValues), myHost.getId());
         this.messageId += 1;
 
+        /*
         System.out.println("Adjusting proposal instance " + instance);
         System.out.println("Updated proposal:");
         for (Integer value : inst.proposedValues) {
             System.out.println(value);
         }
+        */
         broadcaster.bebBroadcast(message);
     }
 
     private void decide(Set<Integer> acceptedValues, int instanceId) {
-        // instances.remove(instanceId);
-        if (!flagStopProcessing && !decided.contains(instanceId)) {
-            System.out.println("Deciding instance " + instanceId);
-            this.decided.add(instanceId);
-            this.myHost.logDecide(acceptedValues);
+        if (!flagStopProcessing && !decided.containsKey(instanceId)) {
+            // System.out.println("Deciding instance " + instanceId);
+            this.decided.put(instanceId, instances.get(instanceId).proposedValues);
+            instances.remove(instanceId);
+            if (instanceId == lastDecided + 1) {
+                lastDecided += 1;
+                this.myHost.logDecide(acceptedValues);
+
+                // check if there's other waiting to be decided in order
+                while (decided.containsKey(lastDecided + 1)) {
+                    lastDecided += 1;
+                    this.myHost.logDecide(decided.get(lastDecided));
+                }
+            }
         }
     }
 
@@ -189,10 +215,24 @@ public class LatticeAgreement {
     // -----------------------------------------------------------------------------------------------------------------
     private void receiveProposal(int instanceId, byte proposalNumber, Set<Integer> proposal, int senderId) {
         if (senderId == this.myHost.getId()) {
-            System.out.println(instances.get(instanceId).acks);
-            System.out.println("Proposal not processed");
+            // System.out.println(instances.get(instanceId).acks);
+            // System.out.println("Proposal not processed");
             return;
         }
+
+        // check if instance has already been decided
+        if (decided.containsKey(instanceId)) {
+            if (isIncluded(decided.get(instanceId), proposal)) {
+                sendAck(instanceId, proposalNumber, senderId);
+            }
+            else {
+                Set<Integer> prop = decided.get(instanceId);
+                prop.addAll(proposal);
+                sendNack(instanceId, proposalNumber, prop, senderId);
+            }
+            return;
+        }
+
         LatticeAgreementInstance instance = instances.computeIfAbsent(instanceId, id -> new LatticeAgreementInstance());
 
         if (isIncluded(instance.proposedValues, proposal)) {
@@ -209,7 +249,7 @@ public class LatticeAgreement {
         Message ack = new Message(messageId, packageProposal(MessageType.ACK.getCode(), instanceId,
                 proposalNumber, new HashSet<>()), myHost.getId());
         this.messageId += 1;
-        System.out.println("Sending ack to " + senderId + " for instance " + instanceId + " proposalNumber " + proposalNumber);
+        // System.out.println("Sending ack to " + senderId + " for instance " + instanceId + " proposalNumber " + proposalNumber);
         broadcaster.plSendTo(ack, senderId);
     }
 
@@ -217,7 +257,7 @@ public class LatticeAgreement {
         Message nack = new Message(messageId, packageProposal(MessageType.NACK.getCode(), instanceId,
                 proposalNumber, proposal), myHost.getId());
         this.messageId += 1;
-        System.out.println("Sending nack to " + senderId + " for instance " + instanceId + " proposalNumber " + proposalNumber);
+        // System.out.println("Sending nack to " + senderId + " for instance " + instanceId + " proposalNumber " + proposalNumber);
         broadcaster.plSendTo(nack, senderId);
     }
 
@@ -250,7 +290,7 @@ public class LatticeAgreement {
     private boolean isIncluded(Set<Integer> set1, Set<Integer> set2) {
         for (Integer value : set1) {
             if (!set2.contains(value)) {
-                System.out.println("Missing " + value);
+                // System.out.println("Missing " + value);
             }
         }
         return set2.containsAll(set1);
@@ -279,23 +319,23 @@ public class LatticeAgreement {
         }
 
         private void processMessage(Message message) {
-            System.out.println("---------Processing message");
+            // System.out.println("---------Processing message");
             byte[] payload = message.getPayload();
-            System.out.println(Arrays.toString(payload));
+            // System.out.println(Arrays.toString(payload));
             int senderId = message.getSenderId();
 
             ByteBuffer buffer = ByteBuffer.wrap(payload);
             MessageType type = MessageType.fromCode(buffer.get());
-            System.out.println("---------Type: " + type + " from " +  senderId);
+            // System.out.println("---------Type: " + type + " from " +  senderId);
             int instanceId = buffer.getInt();
-            System.out.println("---------InstanceId: " + instanceId);
+            // System.out.println("---------InstanceId: " + instanceId);
             byte activeProposal = buffer.get();
-            System.out.println("---------ActiveProposal: " + activeProposal);
+            // System.out.println("---------ActiveProposal: " + activeProposal);
 
             if (type.equals(MessageType.ACK)) {
                 // if it's an ack I do not care about the proposal
                 if (!flagStopProcessing) {
-                    System.out.println("---------Ack for instance " + instanceId + " proposal " + activeProposal);
+                    // System.out.println("---------Ack for instance " + instanceId + " proposal " + activeProposal);
                     ack(instanceId, activeProposal);
                 }
             }
@@ -303,10 +343,10 @@ public class LatticeAgreement {
                 // get the proposal set
                 Set<Integer> proposal = new HashSet<>();
                 int value;
-                System.out.println("---------Received proposal with " + buffer.remaining() + " bytes: ");
+                // System.out.println("---------Received proposal with " + buffer.remaining() + " bytes: ");
                 while (buffer.remaining() >= 4) {
                     value = buffer.getInt();
-                    System.out.println("---------" + value);
+                    // System.out.println("---------" + value);
                     proposal.add(value);
                 }
                 if (buffer.remaining() != 0) {

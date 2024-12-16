@@ -93,13 +93,13 @@ public class Main {
                 }
 
                 p = Integer.parseInt(splits[0]);
-                System.out.println("p = " + p);
+                // System.out.println("p = " + p);
                 proposals = new LinkedList<>();
 
                 vs = Integer.parseInt(splits[1]);
-                System.out.println("vs = " + vs);
+                // System.out.println("vs = " + vs);
                 ds = Integer.parseInt(splits[2]);
-                System.out.println("ds = " + ds);
+                // System.out.println("ds = " + ds);
             }
             else {
                 System.err.println("Problem with the line 1 in the configuration file!");
