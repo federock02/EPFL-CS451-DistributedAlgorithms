@@ -4,14 +4,13 @@ import cs451.BestEffortBroadcast.BEB;
 import cs451.Host;
 import cs451.Message;
 
-import javax.swing.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class LatticeAgreement {
-    private Host myHost;
+    private final Host myHost;
 
     // max number of accepted failures
     private byte f;
@@ -55,7 +54,7 @@ public class LatticeAgreement {
         deliveryThread.start();
 
         this.instances = new ConcurrentHashMap<>();
-        this.decided = new ConcurrentLinkedQueue<Integer>();
+        this.decided = new ConcurrentLinkedQueue<>();
 
         broadcaster = new BEB(this, this.myHost);
         broadcaster.startBEBBroadcaster(hosts);
@@ -71,6 +70,7 @@ public class LatticeAgreement {
         if (deliveryThread != null) {
             deliveryThread.interrupt();
         }
+        broadcaster.stopProcessing();
     }
 
     // deliver message from BEB
