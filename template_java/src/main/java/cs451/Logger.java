@@ -49,22 +49,6 @@ public class Logger {
         }
     }
 
-    public void logBroadcast(int messageId) {
-        logBuffer.add("b " + messageId);
-        // actually write to file only after some events
-        if (logBuffer.size() >= BUFFER_SIZE) {
-            logWriteToFile();
-        }
-    }
-
-    public void logDeliver(byte senderId, int messageId) {
-        logBuffer.add("d " + ((int) senderId + 1) + " " + messageId);
-        // actually write to file only after some events
-        if (logBuffer.size() >= BUFFER_SIZE) {
-            logWriteToFile();
-        }
-    }
-
     public synchronized void logWriteToFile() {
         try {
             while (!logBuffer.isEmpty()) {

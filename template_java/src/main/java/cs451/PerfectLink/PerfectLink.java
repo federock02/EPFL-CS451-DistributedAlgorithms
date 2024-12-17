@@ -26,18 +26,6 @@ public class PerfectLink {
     // avoid race conditions on socket, especially in shutdown hook during sending
     private final Object socketLock = new Object();
 
-    /*
-    // RTT estimation variables
-    // estimation of RTT
-    private double estimatedRTT = 250;
-    // deviation of RTT
-    private double devRTT = 0;
-    // smoothing factor for RTT
-    private final double alpha = 0.125;
-    // smoothing factor for deviation
-    private final double beta = 0.25;
-    */
-
     // thread pool
     private ThreadPoolExecutor threadPool;
 
@@ -58,14 +46,10 @@ public class PerfectLink {
     // task for sending the package
     private final Map<Host, ScheduledFuture<?>> timeoutTasks = new ConcurrentHashMap<>();
 
-    // map from all the other hosts to a map from long encoding the messageId and senderId to the messagePack
-    private final Map<Byte, Map<Long, Object[]>> unacknowledgedMessages = new ConcurrentHashMap<>();
+    // map from all the other hosts to the messaged they still need to acknowledge
+    private final Map<Byte, Map<Integer, Message>> unacknowledgedMessages = new ConcurrentHashMap<>();
     // map byte id to host
     private final Map<Byte, Host> hostMapping = new HashMap<>();
-    // pdf for sampling how many messages to resend
-    private static final double MU = -0.1;
-    private static final double SIGMA = 1.1;
-    private static final Random RANDOM = new Random();
 
     // messages list pool (avoiding constant creation and destruction with garbage collector)
     private final Queue<Queue<Message>> listPool = new ConcurrentLinkedQueue<>();
@@ -182,11 +166,7 @@ public class PerfectLink {
             hostMapping.putIfAbsent(host.getByteId(), host);
             // get the queue corresponding to the host to send to
             // Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new LinkedList<>());
-            Queue<Message> messagePackage = messagePackages.get(host);
-            if (messagePackage == null) {
-                messagePackage = new ConcurrentLinkedQueue<>();
-                messagePackages.put(host, messagePackage);
-            }
+            Queue<Message> messagePackage = messagePackages.computeIfAbsent(host, k -> new ConcurrentLinkedQueue<>());
             // add the message to the queue
             messagePackage.add(message);
             // System.out.println("plSending " + message.getId() + " from " + message.getSenderId() + " to " + host.getId());
@@ -224,14 +204,14 @@ public class PerfectLink {
         }
         // add message to unacknowledged ones
         // do it after send to avoid resending before sending
-        unacknowledgedMessages.computeIfAbsent(host.getByteId(),
-                k -> new ConcurrentSkipListMap<>()).put(encodeMessageKey(message.getId(), message.getByteSenderId()),
-                new Object[]{message, System.currentTimeMillis()});
+        unacknowledgedMessages
+                .computeIfAbsent(host.getByteId(), k -> new ConcurrentHashMap<>())
+                .put(message.getId(), message);
     }
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
-        // System.out.println("Resending");
+        System.out.println("Resending");
         synchronized (queueLock) {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
@@ -334,75 +314,34 @@ public class PerfectLink {
             // will stop only if sending is done and the queue of unacknowledged messages is empty
             while (true) {
                 try {
-                    // wait before sending again, with adaptive timeout
-                    // long dynamicTimeout = calculateTimeout();
-                    // sleep(dynamicTimeout + 100);
                     // hardcoded timeout since I would need to calculate a personalized timeout for every process
                     sleep(200);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                for (Map.Entry<Byte, Map<Long, Object[]>> receiver : unacknowledgedMessages.entrySet()) {
+                for (Map.Entry<Byte, Map<Integer, Message>> receiver : unacknowledgedMessages.entrySet()) {
                     Byte host = receiver.getKey();
-                    Map<Long, Object[]>  messages = receiver.getValue();
+                    Map<Integer, Message>  messages = receiver.getValue();
+
                     if (messages == null) {
                         // System.err.println("Null messages map for host: " + (receiver.getKey() + 1));
                         continue;
                     }
-                    int length = messages.size();
-                    int sendNum = sample(length);
-                    // System.out.println("Sample " + sendNum + " out of " + length);
 
-                    for (Map.Entry<Long, Object[]> entry : messages.entrySet()) {
-                        if (sendNum == 0) {
-                            break;
-                        }
-
-                        Object[] messagePack = entry.getValue();
-                        if (messagePack == null) {
-                            // System.err.println("Null messagePack for key: " + entry.getKey() + " in host: " + host);
-                            return;
-                        }
-
+                    for (Map.Entry<Integer, Message> entry : messages.entrySet()) {
                         Host destination = hostMapping.get(host);
-                        if (destination == null) {
+                        if (destination == null || entry.getValue() == null) {
                             // System.err.println("Host mapping returned null for host: " + host);
-                            return;
+                            continue;
                         }
 
-                        resend((Message) messagePack[0], destination);
-
-                        sendNum--;
+                        resend(entry.getValue(), destination);
                     }
                 }
             }
         }).start();
     }
-
-    private int sample(int length) {
-        if (length <= 0) {
-            return 0;
-        }
-        // generate a log-normal sample
-        double logNormalSample = Math.exp(MU + SIGMA * RANDOM.nextGaussian());
-
-        // normalize the sample to fit in range [1, length] and scale to [0, 1)
-        double normalizedSample = logNormalSample / (logNormalSample + 1);
-        normalizedSample = Math.max(normalizedSample, 0.0);
-        int countToResend = (int) Math.ceil(normalizedSample * length);
-
-        // ensure at least 1 message is chosen
-        return Math.min(Math.max(1, countToResend), length);
-    }
-
-    /*
-    // adaptive timeout calculation
-    private long calculateTimeout() {
-        long timeout = (long) (estimatedRTT + 4 * devRTT);
-        return Math.min(Math.max(timeout, 100), 1000);
-    }
-    */
 
     // logic for receiving acknowledgments from receivers
     public void listenForAcks() {
@@ -439,23 +378,10 @@ public class PerfectLink {
 
                     // System.out.println("Received ack " + messageId + " from " + (senderId + 1) + " from " + (receiver + 1));
 
-                    // long currentTime = System.currentTimeMillis();
-                    long key = encodeMessageKey(messageId, senderId);
-
-                    // check if the message-sender combination was still unacknowledged from the receiver
-                    // Object[] messagePack = unacknowledgedMessages.get(receiver).get(key);
-                    /*
-                        long sendTime = (long) messagePack[1];
-                        long sampleRTT = currentTime - sendTime;
-
-                        // update estimated RTT and deviation
-                        this.estimatedRTT = (1 - this.alpha) * this.estimatedRTT + this.alpha * sampleRTT;
-                        this.devRTT = (1 - this.beta) * this.devRTT + this.beta * Math.abs(sampleRTT - this.estimatedRTT);
-                        */
                     // safely remove the acknowledged message
-                    Map<Long, Object[]> receiverMessages = unacknowledgedMessages.get(receiver);
+                    Map<Integer, Message> receiverMessages = unacknowledgedMessages.get(receiver);
                     if (receiverMessages != null) {
-                        receiverMessages.remove(key);
+                        receiverMessages.remove(messageId);
                     }
                 }
             } catch (IOException e) {
@@ -701,10 +627,4 @@ public class PerfectLink {
         deliveredMessages.add(middle, new int[] {messageId, messageId});
         return middle;
     }
-
-    public static long encodeMessageKey(int messageId, int senderId) {
-        // shift the senderId to the upper bits and combine with messageId
-        return ((long) messageId << 31) | (senderId & 0x7FFFFFFF);
-    }
-
 }

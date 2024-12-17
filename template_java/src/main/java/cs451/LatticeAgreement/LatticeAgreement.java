@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.stream.Collectors;
 
 public class LatticeAgreement {
     private final Host myHost;
@@ -32,8 +33,6 @@ public class LatticeAgreement {
     private Map<Integer, Set<Integer>> decided;
     // last decided instance for keeping them in order
     private int lastDecided;
-    // waiting to be decided
-    private Queue<Integer> toDecide;
 
     int messageId = 1;
 
@@ -54,8 +53,6 @@ public class LatticeAgreement {
         this.ds = ds;
         this.instanceId = 0;
         this.lastDecided = 0;
-
-        this.toDecide = new LinkedList<>();
 
         deliveryThread = new messageDeliveryThread();
         deliveryThread.start();
@@ -134,9 +131,6 @@ public class LatticeAgreement {
             if (inst.active && inst.acks + inst.nacks >= f + 1) {
                 riPropose(instance);
             }
-            if (!inst.active && inst.acks + inst.nacks > n) {
-                instances.remove(instance);
-            }
         }
     }
 
@@ -151,7 +145,7 @@ public class LatticeAgreement {
             inst.proposedValues.addAll(proposal);
             inst.nacks += 1;
             // System.out.println("Acks: " + inst.acks);
-            System.out.println("Nacks: " + inst.nacks);
+            // System.out.println("Nacks: " + inst.nacks);
 
             /*
             System.out.println("Updated proposal:");
@@ -163,9 +157,6 @@ public class LatticeAgreement {
             // check if enough nacks + acks received
             if (inst.active && inst.nacks + inst.acks >= f + 1) {
                 riPropose(instance);
-            }
-            if (!inst.active && inst.acks + inst.nacks > n) {
-                instances.remove(instance);
             }
         }
     }
@@ -181,6 +172,12 @@ public class LatticeAgreement {
         Message message = new Message(messageId, packageProposal(MessageType.PROPOSAL.getCode(),
                 instance, inst.activeProposal, inst.proposedValues), myHost.getId());
         this.messageId += 1;
+
+        if (inst.proposedValues.size() == ds) {
+            inst.active = false;
+            decide(inst.proposedValues, instance);
+            return;
+        }
 
         /*
         System.out.println("Adjusting proposal instance " + instance);
@@ -222,24 +219,31 @@ public class LatticeAgreement {
 
         // check if instance has already been decided
         if (decided.containsKey(instanceId)) {
-            if (isIncluded(decided.get(instanceId), proposal)) {
+            if (proposal.size() < ds && isIncluded(decided.get(instanceId), proposal)) {
                 sendAck(instanceId, proposalNumber, senderId);
             }
             else {
-                Set<Integer> prop = decided.get(instanceId);
-                prop.addAll(proposal);
-                sendNack(instanceId, proposalNumber, prop, senderId);
+                // only send the difference in the proposal
+                Set<Integer> difference = decided.get(instanceId).stream()
+                        .filter(e -> !proposal.contains(e))
+                        .collect(Collectors.toSet());
+                sendNack(instanceId, proposalNumber, difference, senderId);
             }
             return;
         }
 
         LatticeAgreementInstance instance = instances.computeIfAbsent(instanceId, id -> new LatticeAgreementInstance());
 
-        if (isIncluded(instance.proposedValues, proposal)) {
+        if (proposal.size() < ds && isIncluded(instance.proposedValues, proposal)) {
+            // don't send ack if the proposal I received already has all the possible values
             instance.proposedValues = proposal;
             sendAck(instanceId, proposalNumber, senderId);
         }
         else {
+            // only send the difference in the proposal
+            Set<Integer> difference = instance.proposedValues.stream()
+                    .filter(e -> !proposal.contains(e))
+                    .collect(Collectors.toSet());
             instance.proposedValues.addAll(proposal);
             sendNack(instanceId, proposalNumber, instance.proposedValues, senderId);
         }

@@ -124,7 +124,7 @@ public class BEB {
     // -----------------------------------------------------------------------------------------------------------------
     // DELIVERING
     // -----------------------------------------------------------------------------------------------------------------
-    // plDelvery calls bebDelivery
+    // plDelivery calls bebDelivery
     public void bebDeliver(Message message) {
         this.caller.deliverMessage(message);
     }
