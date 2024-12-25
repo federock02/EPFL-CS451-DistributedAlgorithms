@@ -110,6 +110,13 @@ public class LatticeAgreement {
         // deliveryThread.addMessage(message);
 
         broadcaster.bebBroadcast(message);
+
+        // check if the proposal already contains all the different values
+        if (proposal.size() == ds) {
+            // System.out.println("Predeciding");
+            instance.active = false;
+            decide(instance.proposedValues, instanceId);
+        }
     }
 
     private void ack(int instance, byte proposalNumber){
@@ -153,6 +160,10 @@ public class LatticeAgreement {
                 System.out.println(value);
             }
             */
+            if (inst.proposedValues.size() == ds) {
+                riPropose(instance);
+                return;
+            }
 
             // check if enough nacks + acks received
             if (inst.active && inst.nacks + inst.acks >= f + 1) {
@@ -173,12 +184,6 @@ public class LatticeAgreement {
                 instance, inst.activeProposal, inst.proposedValues), myHost.getId());
         this.messageId += 1;
 
-        if (inst.proposedValues.size() == ds) {
-            inst.active = false;
-            decide(inst.proposedValues, instance);
-            return;
-        }
-
         /*
         System.out.println("Adjusting proposal instance " + instance);
         System.out.println("Updated proposal:");
@@ -187,6 +192,12 @@ public class LatticeAgreement {
         }
         */
         broadcaster.bebBroadcast(message);
+
+        // check if the proposal already contains all the different values
+        if (inst.proposedValues.size() == ds) {
+            inst.active = false;
+            decide(inst.proposedValues, instance);
+        }
     }
 
     private void decide(Set<Integer> acceptedValues, int instanceId) {
@@ -219,8 +230,10 @@ public class LatticeAgreement {
 
         // check if instance has already been decided
         if (decided.containsKey(instanceId)) {
-            if (proposal.size() < ds && isIncluded(decided.get(instanceId), proposal)) {
-                sendAck(instanceId, proposalNumber, senderId);
+            if (isIncluded(decided.get(instanceId), proposal)) {
+                if (proposal.size() < ds) {
+                    sendAck(instanceId, proposalNumber, senderId);
+                }
             }
             else {
                 // only send the difference in the proposal
@@ -234,10 +247,19 @@ public class LatticeAgreement {
 
         LatticeAgreementInstance instance = instances.computeIfAbsent(instanceId, id -> new LatticeAgreementInstance());
 
-        if (proposal.size() < ds && isIncluded(instance.proposedValues, proposal)) {
-            // don't send ack if the proposal I received already has all the possible values
+        if (isIncluded(instance.proposedValues, proposal)) {
+            // my current proposal is included in the proposal received
             instance.proposedValues = proposal;
-            sendAck(instanceId, proposalNumber, senderId);
+            // don't send ack if the proposal I received already has all the possible values
+            if (proposal.size() < ds) {
+                sendAck(instanceId, proposalNumber, senderId);
+            }
+            else {
+                // the proposal I received contains all the values possible
+                // System.out.println("Received full proposal");
+                instance.active = false;
+                decide(instance.proposedValues, instanceId);
+            }
         }
         else {
             // only send the difference in the proposal
@@ -246,6 +268,11 @@ public class LatticeAgreement {
                     .collect(Collectors.toSet());
             instance.proposedValues.addAll(proposal);
             sendNack(instanceId, proposalNumber, instance.proposedValues, senderId);
+            if (instance.proposedValues.size() == ds) {
+                // now the proposal contains all the possible different values
+                instance.active = false;
+                decide(instance.proposedValues, instanceId);
+            }
         }
     }
 

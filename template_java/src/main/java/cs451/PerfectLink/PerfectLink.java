@@ -36,7 +36,7 @@ public class PerfectLink {
     // message queue for uniting messages in packages of maxNumPerPackage
     private final Map<Host, Queue<Message>> messagePackages = new ConcurrentHashMap<>();
     // maximum number of messages per package
-    private final int maxNumPerPackage = 2;
+    private final int maxNumPerPackage = 8;
     // timeout for sending a package, even if it was not filled with maxNumPerPackage messages
     private static final long SEND_TIMER = 150;
     // lock for managing access to queue of messages to send
@@ -211,7 +211,7 @@ public class PerfectLink {
 
     // resend primitive, implements the same logic as sending
     public void resend(Message message, Host host) {
-        System.out.println("Resending");
+        // System.out.println("Resending");
         synchronized (queueLock) {
             // get the queue corresponding to the host to send to
             Queue<Message> messagePackage = messagePackages.get(host);
